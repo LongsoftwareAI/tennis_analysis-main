@@ -63,8 +63,12 @@ models:
 # 4. TÙY CHỌN HIỂN THỊ TRÊN VIDEO (VISUALIZATION)
 # ------------------------------------------------------------------------------
 visualization:
-  draw_players: true          # Vẽ khung bounding box của Player 1 và Player 2
-  draw_ball: true             # Vẽ bounding box bóng tennis
+  draw_players: true          # Vẽ người chơi (vòng tròn/ellipse dưới chân hoặc khung chữ nhật)
+  player_draw_mode: "ellipse" # "ellipse": vòng tròn ellipse dưới chân kèm badge ID (⭐ Khuyến nghị)
+                              # "box": khung chữ nhật bounding box truyền thống
+  draw_ball: true             # Vẽ bóng tennis
+  ball_effect: "tracer"       # "tracer": vệt đuôi sao băng comet trail + quầng phát sáng (⭐ Dễ nhìn khi bóng bay nhanh)
+                              # "box": khung chữ nhật bounding box truyền thống
   draw_court_keypoints: true  # Vẽ 14 điểm mốc vạch sân
   draw_mini_court: true       # Vẽ bản đồ sân mini 2D ở góc màn hình
   draw_stats: true            # Vẽ bảng thống kê tốc độ đánh và tốc độ chạy

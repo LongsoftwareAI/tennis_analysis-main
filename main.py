@@ -304,10 +304,12 @@ def main():
     output_video_frames = video_frames
 
     if vis_cfg.get("draw_players", True):
-        output_video_frames = player_tracker.draw_bboxes(output_video_frames, player_detections)
+        player_mode = vis_cfg.get("player_draw_mode", "ellipse")
+        output_video_frames = player_tracker.draw_bboxes(output_video_frames, player_detections, draw_mode=player_mode)
 
     if vis_cfg.get("draw_ball", True):
-        output_video_frames = ball_tracker.draw_bboxes(output_video_frames, ball_detections)
+        ball_mode = vis_cfg.get("ball_effect", "tracer")
+        output_video_frames = ball_tracker.draw_bboxes(output_video_frames, ball_detections, draw_mode=ball_mode)
 
     # Court keypoints
     if vis_cfg.get("draw_court_keypoints", True):

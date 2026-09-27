@@ -283,24 +283,87 @@ class PlayerTracker:
 
         return player_dict
 
-    def draw_bboxes(self, video_frames, player_detections):
+    def draw_player_ellipse(self, frame, bbox, color, track_id=None):
         """
-        Draw player bounding boxes and IDs on video frames.
+        Draw a stylish broadcast perspective ellipse under the player's feet with an ID badge.
         """
+        x1, y1, x2, y2 = bbox
+        x_center = int((x1 + x2) / 2)
+        width = max(10, x2 - x1)
+        
+        # 1. Perspective ellipse arc on the court ground around feet
+        axes_w = max(14, int(width * 0.70))
+        axes_h = max(5, int(0.35 * axes_w))
+        cv2.ellipse(
+            frame,
+            center=(x_center, int(y2)),
+            axes=(axes_w, axes_h),
+            angle=0.0,
+            startAngle=-45,
+            endAngle=235,
+            color=color,
+            thickness=3,
+            lineType=cv2.LINE_AA
+        )
+        
+        # 2. Sleek filled badge for Player ID
+        if track_id is not None:
+            rect_w = max(36, min(50, int(axes_w * 0.88)))
+            rect_h = max(16, min(22, int(rect_w * 0.48)))
+            rx1 = int(x_center - rect_w // 2)
+            ry1 = int(y2 + 4)
+            rx2 = int(x_center + rect_w // 2)
+            ry2 = int(y2 + 4 + rect_h)
+            
+            # Subtle shadow & colored badge with white border
+            cv2.rectangle(frame, (rx1 + 1, ry1 + 1), (rx2 + 1, ry2 + 1), (0, 0, 0), -1)
+            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), color, -1)
+            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), (255, 255, 255), 1)
+            
+            text = f"P{track_id}"
+            text_color = (0, 0, 0) if color == (0, 255, 255) else (255, 255, 255)
+            font_scale = 0.45 if rect_w < 42 else 0.5
+            cv2.putText(
+                frame,
+                text,
+                (rx1 + 6, ry1 + rect_h - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                text_color,
+                2,
+                cv2.LINE_AA
+            )
+
+    def draw_bboxes(self, video_frames, player_detections, draw_mode="ellipse"):
+        """
+        Draw player annotations on video frames.
+        draw_mode: "ellipse" (ring under feet with ID badge) or "box" (traditional rectangle)
+        """
+        player_colors = {
+            1: (0, 0, 255),    # Red for Player 1 (like in reference image)
+            2: (0, 255, 255),  # Yellow for Player 2 (like in reference image)
+        }
+
         output_video_frames = []
         for frame, player_dict in zip(video_frames, player_detections):
             for track_id, bbox in player_dict.items():
                 x1, y1, x2, y2 = bbox
-                cv2.putText(
-                    frame,
-                    f"Player ID: {track_id}",
-                    (int(x1), int(max(15, y1 - 10))),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9,
-                    (0, 0, 255),
-                    2
-                )
-                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)
+                color = player_colors.get(track_id, (0, 255, 0))
+
+                if draw_mode == "ellipse":
+                    self.draw_player_ellipse(frame, bbox, color, track_id=track_id)
+                else:
+                    cv2.putText(
+                        frame,
+                        f"Player ID: {track_id}",
+                        (int(x1), int(max(15, y1 - 10))),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.9,
+                        color,
+                        2
+                    )
+                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+
             output_video_frames.append(frame)
 
         return output_video_frames

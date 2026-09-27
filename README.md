@@ -145,7 +145,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. Cấu hình & Chạy phân tích
-Mở file [`config.yaml`](config.yaml) và chỉnh đường dẫn video bạn muốn phân tích:
+Mở file [`config.yaml`](config.yaml) và chỉnh đường dẫn video cùng các hiệu ứng trực quan:
 ```yaml
 video:
   input_path: "input_videos/new_input/clips/clip_01_nadal_vs_verdasco_fast.mp4"
@@ -155,6 +155,12 @@ video:
 tracking:
   court_mode: "cpv"  # 'cpv' (chuẩn công nghiệp), 'dynamic', hoặc 'static'
   use_stubs: true    # Dùng cache nếu đã detect trước đó
+
+visualization:
+  draw_players: true          # Vẽ tuyển thủ
+  player_draw_mode: "ellipse" # 'ellipse' (vòng tròn dưới chân) hoặc 'box' (khung chữ nhật)
+  draw_ball: true             # Vẽ bóng
+  ball_effect: "tracer"       # 'tracer' (vệt đuôi sao băng comet trail) hoặc 'box'
 ```
 
 Chạy chương trình:

@@ -363,25 +363,74 @@ class BallTracker:
 
         return np.array(boxes), np.array(scores)
 
-    def draw_bboxes(self, video_frames, ball_detections):
+    def draw_bboxes(self, video_frames, ball_detections, draw_mode="tracer", max_trail=10):
         """
-        Draw ball bounding boxes on video frames.
+        Draw ball annotations on video frames.
+        draw_mode: "tracer" (high-speed broadcast motion comet tail + glowing halo) or "box"
         """
+        # Pre-extract center coordinates for all frames to build continuous trajectory
+        ball_history = []
+        for b_dict in ball_detections:
+            b = b_dict.get(1, [])
+            if len(b) == 4 and not np.isnan(b[0]):
+                ball_history.append(((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0))
+            else:
+                ball_history.append(None)
+
         output_video_frames = []
-        for frame, ball_dict in zip(video_frames, ball_detections):
-            for track_id, bbox in ball_dict.items():
-                if len(bbox) == 4:
-                    x1, y1, x2, y2 = bbox
-                    cv2.putText(
-                        frame,
-                        f"Ball ID: {track_id}",
-                        (int(x1), int(max(15, y1 - 10))),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.9,
-                        (0, 255, 255),
-                        2
-                    )
-                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 2)
+        for f_idx, (frame, ball_dict) in enumerate(zip(video_frames, ball_detections)):
+            if draw_mode == "tracer":
+                # Collect recent trail points within window
+                pts = []
+                for i in range(max(0, f_idx - max_trail), f_idx + 1):
+                    if i < len(ball_history) and ball_history[i] is not None:
+                        pts.append((i, ball_history[i]))
+
+                if pts:
+                    # 1. Draw smooth tapering motion comet tail
+                    for k in range(len(pts) - 1):
+                        idx1, p1 = pts[k]
+                        idx2, p2 = pts[k + 1]
+                        # Only connect close consecutive frames to avoid jump artifacts
+                        if idx2 - idx1 <= 2:
+                            progress = (k + 1) / len(pts)
+                            thickness = max(2, int(progress * 5))
+                            # Vibrant tennis yellow gradient: (B, G, R)
+                            b_val = int(40 + 215 * progress)
+                            g_val = 255
+                            r_val = int(50 + 205 * (1.0 - progress))
+                            color = (b_val, g_val, r_val)
+                            cv2.line(frame, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), color, thickness, cv2.LINE_AA)
+
+                    # 2. Draw glowing halo and solid core at current ball position
+                    if ball_history[f_idx] is not None:
+                        curr_pt = ball_history[f_idx]
+                        cx, cy = int(curr_pt[0]), int(curr_pt[1])
+
+                        # Semi-transparent glowing halo
+                        overlay = frame.copy()
+                        cv2.circle(overlay, (cx, cy), 12, (0, 255, 255), -1, cv2.LINE_AA)
+                        cv2.circle(overlay, (cx, cy), 7, (255, 255, 255), -1, cv2.LINE_AA)
+                        cv2.addWeighted(overlay, 0.40, frame, 0.60, 0, frame)
+
+                        # Crisp inner core
+                        cv2.circle(frame, (cx, cy), 6, (0, 255, 255), -1, cv2.LINE_AA)
+                        cv2.circle(frame, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
+            else:
+                for track_id, bbox in ball_dict.items():
+                    if len(bbox) == 4 and not np.isnan(bbox[0]):
+                        x1, y1, x2, y2 = bbox
+                        cv2.putText(
+                            frame,
+                            f"Ball ID: {track_id}",
+                            (int(x1), int(max(15, y1 - 10))),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.9,
+                            (0, 255, 255),
+                            2
+                        )
+                        cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 2)
+
             output_video_frames.append(frame)
 
         return output_video_frames
