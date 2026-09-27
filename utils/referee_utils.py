@@ -79,7 +79,10 @@ class RefereeSystem:
 
             # Project to mini court
             try:
-                kps = court_keypoints[best_bounce_f] if isinstance(court_keypoints, list) else court_keypoints
+                if isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > 14 and hasattr(court_keypoints[0], '__len__'):
+                    kps = court_keypoints[best_bounce_f]
+                else:
+                    kps = court_keypoints
                 src_pts = np.array([(kps[2 * j], kps[2 * j + 1]) for j in range(14)], dtype=np.float32)
                 H, _ = cv2.findHomography(src_pts, dst_pts)
                 pt = np.array([[[bcx, bcy]]], dtype=np.float32)
@@ -147,9 +150,13 @@ class RefereeSystem:
                 d2 = np.hypot(b_pos[0] - p2_pos[0], b_pos[1] - p2_pos[1])
                 is_p1_hitter = (d1 < d2) or (b_pos[1] > net_y)
             elif p1_pos:
-                is_p1_hitter = True
+                is_p1_hitter = (b_pos[1] > net_y) or (np.hypot(b_pos[0] - p1_pos[0], b_pos[1] - p1_pos[1]) < 80)
+            elif p2_pos:
+                is_p1_hitter = (b_pos[1] > net_y) and not (np.hypot(b_pos[0] - p2_pos[0], b_pos[1] - p2_pos[1]) < 80)
             else:
-                is_p1_hitter = False
+                is_p1_hitter = (b_pos[1] > net_y)
+        elif b_pos is not None:
+            is_p1_hitter = (b_pos[1] > net_y)
         else:
             is_p1_hitter = True
 
@@ -205,12 +212,17 @@ class RefereeSystem:
             reason_text = f"Player {hitter_id} danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
             scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
 
+        second_bounce_pos = (lx - 20.0, float(court_start_y - 18)) if is_p1_hitter else (lx + 20.0, float(court_end_y + 18))
+        second_bounce_frame = min(num_frames - 1, landing_frame + 10)
+
         self.decision_info = {
             'final_shot_frame': final_shot_frame,
             'landing_frame': landing_frame,
+            'bounce_frame': landing_frame,
             'hitter_id': hitter_id,
             'receiver_id': receiver_id,
             'decision': decision,
+            'type': 'WINNER_IN' if is_first_bounce_in else 'OUT',
             'margin_cm': margin_cm,
             'nearest_line': nearest_line,
             'point_winner': point_winner,
@@ -218,6 +230,9 @@ class RefereeSystem:
             'reason_text': reason_text,
             'scoring_action': scoring_action,
             'landing_pos_mini': (lx, ly),
+            'first_bounce_pos': (lx, ly),
+            'second_bounce_pos': second_bounce_pos,
+            'second_bounce_frame': second_bounce_frame,
             'camera_land_pos': camera_land_pos,
             'is_first_bounce_in': is_first_bounce_in,
             'flight_duration_sec': max(0.4, (landing_frame - final_shot_frame) / 24.0)
@@ -226,6 +241,9 @@ class RefereeSystem:
         print(f"[RefereeSystem] Evaluation Complete:")
         print(f"  - First Bounce: F{landing_frame} | Decision: {decision} | Margin: {margin_cm:+.1f} cm")
         print(f"  - Verdict: {verdict_text} (Winner: Player {point_winner}) | Reason: {reason_text}")
+
+        if self.mini_court is not None:
+            self.mini_court.set_referee_decision(self.decision_info, all_bounces=self.all_bounces)
 
         return self.decision_info
 

@@ -58,7 +58,7 @@ output_videos/*.mkv
 tracker_stubs/*.pkl
 *.pkl
 
-# 8. Operating System & IDE Files
+# 8. Operating System, IDE & Temporary Test Files
 .DS_Store
 Thumbs.db
 desktop.ini
@@ -67,3 +67,6 @@ desktop.ini
 *.swp
 *.swo
 *.log
+scratch/
+test_*.py
+*_test.py
