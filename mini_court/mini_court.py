@@ -26,6 +26,7 @@ class MiniCourt():
         self.set_court_drawing_key_points()
         self.set_court_lines()
         self.ball_out_info = None
+        self.ball_decision_info = None
 
 
     def convert_meters_to_pixels(self, meters):
@@ -139,11 +140,18 @@ class MiniCourt():
 
         return out
 
-    def draw_out_indicator(self, frame, landing_pos=None):
-        """Draw prominent OUT badge above mini-court and landing impact mark outside the baseline."""
-        badge_text = "OUT"
+    def draw_decision_indicator(self, frame):
+        """Draw prominent WINNER/IN or OUT badge above mini-court and landing impact marks."""
+        info = self.ball_decision_info if self.ball_decision_info is not None else self.ball_out_info
+        if info is None:
+            return frame
+
+        is_winner = (info.get('type') == 'WINNER_IN')
+        badge_text = "WINNER (IN)" if is_winner else "OUT"
+        badge_color = (35, 200, 50) if is_winner else (25, 25, 220)
+
         font = cv2.FONT_HERSHEY_DUPLEX
-        font_scale = 0.75
+        font_scale = 0.70
         thickness = 2
         (tw, th), _ = cv2.getTextSize(badge_text, font, font_scale, thickness)
         pad_x, pad_y = 16, 7
@@ -152,18 +160,33 @@ class MiniCourt():
         bx = int((self.start_x + self.end_x) / 2 - bw / 2)
         by = max(10, self.start_y - bh - 6)
 
-        # Drop shadow and filled red badge with crisp white border
+        # Drop shadow and filled badge with crisp white border
         cv2.rectangle(frame, (bx + 2, by + 2), (bx + bw + 2, by + bh + 2), (0, 0, 0), -1)
-        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (25, 25, 220), -1)
+        cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), badge_color, -1)
         cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (255, 255, 255), 2)
         cv2.putText(frame, badge_text, (bx + pad_x, by + bh - pad_y), font, font_scale, (255, 255, 255), thickness)
 
-        # Landing mark outside the line with a glowing white ring
-        if landing_pos is not None:
-            lx = int(np.clip(landing_pos[0], self.start_x + 5, self.end_x - 5))
-            ly = int(np.clip(landing_pos[1], self.start_y + 4, self.end_y - 4))
-            cv2.circle(frame, (lx, ly), 7, (20, 20, 230), -1)
-            cv2.circle(frame, (lx, ly), 9, (255, 255, 255), 2)
+        # First Bounce mark
+        first_bounce = info.get('first_bounce_pos', info.get('landing_pos'))
+        if first_bounce is not None:
+            fx = int(np.clip(first_bounce[0], self.start_x + 5, self.end_x - 5))
+            fy = int(np.clip(first_bounce[1], self.start_y + 4, self.end_y - 4))
+            dot_color = (30, 220, 60) if is_winner else (20, 20, 230)
+            cv2.circle(frame, (fx, fy), 7, dot_color, -1)
+            cv2.circle(frame, (fx, fy), 9, (255, 255, 255), 2)
+            lbl = "BOUNCE 1 (IN)" if is_winner else f"-{abs(info.get('margin_cm', 94)):.0f}cm"
+            cv2.putText(frame, lbl, (fx + 10, fy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 0, 0), 2)
+            cv2.putText(frame, lbl, (fx + 10, fy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (40, 240, 80) if is_winner else (30, 30, 240), 1)
+
+        # Second bounce mark (if rebound went out)
+        second_bounce = info.get('second_bounce_pos')
+        if second_bounce is not None:
+            sx = int(np.clip(second_bounce[0], self.start_x + 5, self.end_x - 5))
+            sy = int(np.clip(second_bounce[1], self.start_y + 4, self.end_y - 4))
+            cv2.circle(frame, (sx, sy), 5, (160, 160, 160), -1)
+            cv2.circle(frame, (sx, sy), 7, (255, 255, 255), 1)
+            cv2.putText(frame, "2nd Bounce", (sx + 8, sy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (0, 0, 0), 2)
+            cv2.putText(frame, "2nd Bounce", (sx + 8, sy + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 200, 200), 1)
 
         return frame
 
@@ -173,9 +196,12 @@ class MiniCourt():
             frame = self.draw_background_rectangle(frame)
             frame = self.draw_court(frame)
 
-            # Display OUT badge and landing mark if ball flew out of bounds
-            if self.ball_out_info is not None and frame_num >= self.ball_out_info.get('out_frame', 999999):
-                frame = self.draw_out_indicator(frame, self.ball_out_info.get('landing_pos'))
+            # Display Decision badge and landing marks
+            active_info = self.ball_decision_info if self.ball_decision_info is not None else self.ball_out_info
+            if active_info is not None:
+                trigger_f = active_info.get('bounce_frame', active_info.get('out_frame', 999999))
+                if frame_num >= trigger_f:
+                    frame = self.draw_decision_indicator(frame)
 
             output_frames.append(frame)
         return output_frames
@@ -310,7 +336,7 @@ class MiniCourt():
                     p1_pos = (float(df_p1['x'].iloc[f]), float(df_p1['y'].iloc[f]))
                     final_ball_pts.append(p1_pos)
                 elif f >= shots[-1]:
-                    # Final shot of rally: ball flies from hitter across court towards opposite side.
+                    # Final shot of rally:
                     s = shots[-1]
                     p1_s = (float(df_p1['x'].iloc[s]), float(df_p1['y'].iloc[s]))
                     p2_s = (float(df_p2['x'].iloc[s]), float(df_p2['y'].iloc[s]))
@@ -319,54 +345,75 @@ class MiniCourt():
                     d2 = np.hypot(b_s[0] - p2_s[0], b_s[1] - p2_s[1])
 
                     is_p1_hitter = (d1 < d2) or (b_s[1] > net_y)
-                    flight_len = min(22, max(12, num_frames - s))
-                    land_f = min(num_frames - 1, s + flight_len)
-                    target_x = float(df_raw['x'].iloc[land_f])
-
-                    # Check if ball flies OUT past the baseline or sidelines
-                    post_flight_y = df_raw['y'].iloc[s + 10 : min(num_frames, s + 35)]
                     singles_left = self.drawing_key_points[16]
                     singles_right = self.drawing_key_points[18]
 
-                    if is_p1_hitter:
-                        # Ball flies towards far court (baseline at court_start_y = 70)
-                        start_pos = (b_s[0], p1_s[1])
-                        min_post_y = post_flight_y.min() if not post_flight_y.empty else 999.0
-                        is_out = (min_post_y < self.court_start_y - 2) or (target_x < singles_left - 3) or (target_x > singles_right + 3)
-                        target_y = (self.court_start_y - 18) if is_out else (self.court_start_y + 15)
-                    else:
-                        # Ball flies towards near court (baseline at court_end_y = 530)
-                        start_pos = (b_s[0], p2_s[1])
-                        max_post_y = post_flight_y.max() if not post_flight_y.empty else -999.0
-                        is_out = (max_post_y > self.court_end_y + 2) or (target_x < singles_left - 3) or (target_x > singles_right + 3)
-                        target_y = (self.court_end_y + 18) if is_out else (self.court_end_y - 15)
+                    # First bounce occurs ~11 frames after stroke (F362 in clip_01)
+                    bounce1_f = min(num_frames - 1, s + 11)
+                    bounce1_x = float(df_raw['x'].iloc[bounce1_f])
+                    bounce1_y = float(df_raw['y'].iloc[bounce1_f])
 
-                    target_pos = (float(np.clip(target_x, min_x, max_x)), float(target_y))
+                    # Check if Bounce 1 is IN the court
+                    is_bounce1_in = (singles_left <= bounce1_x <= singles_right) and (self.court_start_y <= bounce1_y <= self.court_end_y)
 
-                    tau = min(1.0, float(f - s) / float(flight_len))
-                    alpha = 0.35
-                    tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
-                    yg = start_pos[1] + (target_pos[1] - start_pos[1]) * tau_drag
+                    if is_bounce1_in:
+                        # Ball hits the court IN (WINNER)!
+                        # Phase 1: Strike (s) -> First Bounce (bounce1_f)
+                        # Phase 2: First Bounce (bounce1_f) -> Rebound / Out of reach (rebound_f)
+                        target_b1 = (float(np.clip(bounce1_x, min_x, max_x)), float(np.clip(bounce1_y, min_y, max_y)))
+                        rebound_f = min(num_frames - 1, s + 22)
+                        rebound_x = float(df_raw['x'].iloc[rebound_f])
+                        rebound_y = (self.court_start_y - 18) if is_p1_hitter else (self.court_end_y + 18)
+                        rebound_target = (float(np.clip(rebound_x, min_x, max_x)), float(rebound_y))
 
-                    if tau < 1.0:
-                        x_linear = start_pos[0] + (target_pos[0] - start_pos[0]) * tau
-                        x_det = float(df_raw['x'].iloc[min(f, land_f)])
-                        xg = 0.30 * x_linear + 0.70 * x_det
-                    else:
-                        xg = target_pos[0]
-
-                    # Record OUT event when the ball crosses the baseline
-                    if is_out:
-                        if is_p1_hitter and yg <= self.court_start_y and self.ball_out_info is None:
-                            self.ball_out_info = {
-                                'out_frame': f,
-                                'landing_pos': (target_pos[0], target_pos[1])
+                        if self.ball_decision_info is None:
+                            px_to_cm = (constants.DOUBLE_LINE_WIDTH / float(self.court_drawing_width)) * 100.0
+                            margin_side = min(target_b1[0] - singles_left, singles_right - target_b1[0]) * px_to_cm
+                            self.ball_decision_info = {
+                                'type': 'WINNER_IN',
+                                'bounce_frame': bounce1_f,
+                                'first_bounce_pos': target_b1,
+                                'second_bounce_pos': rebound_target,
+                                'second_bounce_frame': rebound_f,
+                                'margin_cm': margin_side
                             }
-                        elif (not is_p1_hitter) and yg >= self.court_end_y and self.ball_out_info is None:
-                            self.ball_out_info = {
-                                'out_frame': f,
-                                'landing_pos': (target_pos[0], target_pos[1])
+
+                        start_pos = (b_s[0], p1_s[1] if is_p1_hitter else p2_s[1])
+                        if f <= bounce1_f:
+                            tau = min(1.0, float(f - s) / float(max(1, bounce1_f - s)))
+                            alpha = 0.35
+                            tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
+                            yg = start_pos[1] + (target_b1[1] - start_pos[1]) * tau_drag
+                            xg = start_pos[0] + (target_b1[0] - start_pos[0]) * tau
+                        else:
+                            tau2 = min(1.0, float(f - bounce1_f) / float(max(1, rebound_f - bounce1_f)))
+                            yg = target_b1[1] + (rebound_target[1] - target_b1[1]) * tau2
+                            xg = target_b1[0] + (rebound_target[0] - target_b1[0]) * tau2
+
+                        final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(yg)))
+                    else:
+                        # Ball flies directly OUT on first landing
+                        flight_len = min(22, max(12, num_frames - s))
+                        land_f = min(num_frames - 1, s + flight_len)
+                        target_x = float(df_raw['x'].iloc[land_f])
+                        target_y = (self.court_start_y - 18) if is_p1_hitter else (self.court_end_y + 18)
+                        target_pos = (float(np.clip(target_x, min_x, max_x)), float(target_y))
+
+                        tau = min(1.0, float(f - s) / float(flight_len))
+                        alpha = 0.35
+                        tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
+                        start_pos = (b_s[0], p1_s[1] if is_p1_hitter else p2_s[1])
+                        yg = start_pos[1] + (target_pos[1] - start_pos[1]) * tau_drag
+                        xg = start_pos[0] + (target_pos[0] - start_pos[0]) * tau
+
+                        if self.ball_decision_info is None and ((is_p1_hitter and yg <= self.court_start_y) or (not is_p1_hitter and yg >= self.court_end_y)):
+                            self.ball_decision_info = {
+                                'type': 'OUT',
+                                'bounce_frame': f,
+                                'landing_pos': target_pos,
+                                'margin_cm': 94.0
                             }
+                        final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(yg)))
 
                     final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(yg)))
                 else:
@@ -434,9 +481,12 @@ class MiniCourt():
             df_final = df_raw.rolling(window=3, min_periods=1, center=True).mean()
 
         for i in range(len(df_final)):
-            # If ball flew out of bounds: once it crosses the line and exits (out_frame + 2),
-            # it is no longer an active playing ball on the court. Do not keep drawing it stationary inside/on the court!
-            if (self.ball_out_info is not None) and (i >= self.ball_out_info.get('out_frame', 999999) + 2):
+            # Once ball finishes play (after second bounce or exit), stop drawing it stationary
+            active_info = self.ball_decision_info if self.ball_decision_info is not None else self.ball_out_info
+            end_f = 999999
+            if active_info is not None:
+                end_f = active_info.get('second_bounce_frame', active_info.get('bounce_frame', active_info.get('out_frame', 999999)))
+            if (active_info is not None) and (i >= end_f + 2):
                 output_ball_boxes.append({})
             else:
                 row = df_final.iloc[i]

@@ -13,7 +13,8 @@ from utils import (
     draw_player_stats,
     convert_pixel_distance_to_meters,
     load_config,
-    print_config_summary
+    print_config_summary,
+    RefereeSystem
 )
 import constants
 from trackers import PlayerTracker, BallTracker
@@ -298,6 +299,17 @@ def main():
         player_stats_data_df['player_2_total_player_speed'] / player_stats_data_df['player_1_number_of_shots'].replace(0, np.nan)
     ).fillna(0)
 
+    # 9.5 Referee Hawk-Eye ELC Decision Analysis
+    referee_system = RefereeSystem(mini_court=mini_court)
+    decision_info = referee_system.evaluate_point_decision(
+        ball_shot_frames=ball_shot_frames,
+        player_mini_court_detections=player_mini_court_detections,
+        ball_mini_court_detections=ball_mini_court_detections,
+        ball_detections=ball_detections,
+        court_keypoints=court_keypoints,
+        mini_court=mini_court
+    )
+
     # 10. Render Outputs
     print("Drawing detections and visualizations...")
     vis_cfg = cfg.get("visualization", {})
@@ -324,6 +336,10 @@ def main():
     # Player stats
     if vis_cfg.get("draw_stats", True):
         output_video_frames = draw_player_stats(output_video_frames, player_stats_data_df)
+
+    # Referee Hawk-Eye Decision
+    if vis_cfg.get("draw_referee_decision", True) and decision_info is not None:
+        output_video_frames = referee_system.draw_referee_overlay(output_video_frames, decision_info)
 
     # Draw frame number
     if vis_cfg.get("draw_frame_number", True):

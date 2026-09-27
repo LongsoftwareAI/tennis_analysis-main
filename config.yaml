@@ -72,4 +72,5 @@ visualization:
   draw_court_keypoints: true  # Vẽ 14 điểm mốc vạch sân
   draw_mini_court: true       # Vẽ bản đồ sân mini 2D ở góc màn hình
   draw_stats: true            # Vẽ bảng thống kê tốc độ đánh và tốc độ chạy
+  draw_referee_decision: true # Hiển thị thẻ phán quyết trọng tài Hawk-Eye ELC (check IN/OUT, khoảng cách vạch, tính điểm)
   draw_frame_number: true     # Vẽ số thứ tự frame ở góc trên bên trái
