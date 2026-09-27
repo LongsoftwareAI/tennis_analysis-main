@@ -1,0 +1,71 @@
+# ==============================================================================
+# 🎾 CẤU HÌNH HỆ THỐNG PHÂN TÍCH TENNIS (TENNIS ANALYSIS PIPELINE CONFIG)
+# ==============================================================================
+# Hướng dẫn:
+# Bạn chỉ cần thay đổi đường dẫn video ở mục 'input_path' để chọn video cần chạy.
+# Sau đó chạy lệnh đơn giản: python main.py
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. CẤU HÌNH VIDEO ĐẦU VÀO & ĐẦU RA (VIDEO I/O)
+# ------------------------------------------------------------------------------
+video:
+  # 👉 CHỌN VIDEO PHÂN TÍCH TẠI ĐÂY:
+  # Một số video clip có sẵn trong hệ thống:
+  #   - "input_videos/new_input/clips/clip_01_nadal_vs_verdasco_fast.mp4" (13s - Pha bóng kinh điển Nadal vs Verdasco)
+  #   - "input_videos/new_input/clips/clip_02_zverev_vs_murray.mp4"       (Pha bóng Zverev vs Murray)
+  #   - "input_videos/new_input/clips/clip_03_duckworth_vs_hewitt.mp4"    (Pha bóng Duckworth vs Hewitt)
+  #   - "input_videos/new_input/clips/clip_04_monfils_rally.mp4"          (Pha rally của Monfils)
+  #   - "input_videos/input_video.mp4"                                    (Video mẫu ban đầu)
+  input_path: "input_videos/new_input/clips/clip_01_nadal_vs_verdasco_fast.mp4"
+
+  # Thư mục lưu kết quả phân tích
+  output_dir: "output_videos"
+
+  # Tên file video xuất ra.
+  # "auto": Tự động đặt tên theo cấu trúc <tên_video>_analysis.avi
+  # Hoặc bạn có thể tự đặt tên cụ thể: "my_result.avi"
+  output_filename: "auto"
+
+# ------------------------------------------------------------------------------
+# 2. CẤU HÌNH THEO DÕI VÀ THUẬT TOÁN (TRACKING & ALGORITHMS)
+# ------------------------------------------------------------------------------
+tracking:
+  # Chế độ bám vạch sân (Court Line Tracking Mode):
+  #   - "cpv":     (Khuyến nghị ⭐) Hybrid AI khởi tạo + Pure CPV Lucas-Kanade Optical Flow.
+  #                Chống rung giật cực tốt khi camera lia/xê dịch góc quay.
+  #   - "dynamic": Chạy mạng AI ResNet50 từng frame + bộ lọc làm mượt EMA.
+  #   - "static":  Dự đoán cố định từ Frame 0 (nhanh nhất, chỉ dùng khi camera đứng yên).
+  court_mode: "cpv"
+
+  # Bộ đệm dữ liệu (Stub Cache):
+  #   - use_stubs: true  -> Tự động đọc dữ liệu đã detect trước đó (trong tracker_stubs/)
+  #                         giúp render nhanh trong vài giây.
+  #   - force_live: false -> Đặt true nếu bạn muốn bắt buộc chạy lại mô hình AI từ đầu.
+  use_stubs: true
+  force_live: false
+  stubs_dir: "tracker_stubs"
+
+# ------------------------------------------------------------------------------
+# 3. ĐƯỜNG DẪN CÁC MÔ HÌNH HỌC SÂU (MODELS)
+# ------------------------------------------------------------------------------
+models:
+  # Model phát hiện người chơi (Player 1, Player 2)
+  player_model: "models/yolo26s.pt"
+
+  # Model phát hiện bóng tennis (custom PyTorch YOLO26 chuyên dụng)
+  ball_model: "models/ball_detector_yolo26_best.pt"
+
+  # Model phát hiện 14 điểm mốc vạch sân tennis (ResNet50 TensorFlow/Keras)
+  court_model: "models/keypoints_model.keras"
+
+# ------------------------------------------------------------------------------
+# 4. TÙY CHỌN HIỂN THỊ TRÊN VIDEO (VISUALIZATION)
+# ------------------------------------------------------------------------------
+visualization:
+  draw_players: true          # Vẽ khung bounding box của Player 1 và Player 2
+  draw_ball: true             # Vẽ bounding box bóng tennis
+  draw_court_keypoints: true  # Vẽ 14 điểm mốc vạch sân
+  draw_mini_court: true       # Vẽ bản đồ sân mini 2D ở góc màn hình
+  draw_stats: true            # Vẽ bảng thống kê tốc độ đánh và tốc độ chạy
+  draw_frame_number: true     # Vẽ số thứ tự frame ở góc trên bên trái

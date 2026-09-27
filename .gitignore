@@ -1,0 +1,69 @@
+# ==============================================================================
+# Git Ignore Configuration - Tennis Analysis Pipeline
+# ==============================================================================
+
+# 1. Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# 2. Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+
+# 3. Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# 4. Model Weights & Checkpoints (Large Binaries)
+runs/
+*.pt
+*.pth
+*.keras
+*.h5
+*.tflite
+*.onnx
+models/*.pt
+models/*.pth
+models/*.keras
+models/*.h5
+models/*.tflite
+models/*.onnx
+models/ball_detector_tf_saved_model/
+
+# 5. Datasets (Large Data Files)
+training/datasets/
+training/merged_tennis_dataset/
+training/dataset_*
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# 6. Video Media (Raw & Output Videos)
+input_videos/new_input/
+output_videos/*.avi
+output_videos/*.mp4
+output_videos/*.mkv
+
+# 7. Tracker Stubs & Pickles
+tracker_stubs/*.pkl
+*.pkl
+
+# 8. Operating System & IDE Files
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
