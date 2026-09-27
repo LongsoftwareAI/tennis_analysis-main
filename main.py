@@ -180,13 +180,14 @@ def main():
     mini_court = MiniCourt(video_frames[0]) 
 
     # 9. Detect Ball Shots
-    ball_shot_frames = ball_tracker.get_ball_shot_frames(ball_detections)
+    ball_shot_frames = ball_tracker.get_ball_shot_frames(ball_detections, player_positions=player_detections)
 
-    # Convert positions to mini court coordinates
+    # Convert positions to mini court coordinates with Physics-Informed 3D Ground Projection
     player_mini_court_detections, ball_mini_court_detections = mini_court.convert_bounding_boxes_to_mini_court_coordinates(
         player_detections, 
         ball_detections,
-        court_keypoints
+        court_keypoints,
+        ball_shot_frames=ball_shot_frames
     )
 
     player_stats_data = [{
@@ -204,16 +205,34 @@ def main():
         'player_2_last_player_speed': 0,
     }]
     
-    for ball_shot_ind in range(len(ball_shot_frames) - 1):
-        start_frame = ball_shot_frames[ball_shot_ind]
-        end_frame = ball_shot_frames[ball_shot_ind + 1]
-        ball_shot_time_in_seconds = (end_frame - start_frame) / 24.0  # 24 fps
+    shot_frames_extended = list(ball_shot_frames)
+    if shot_frames_extended and (len(video_frames) - 1 - shot_frames_extended[-1] >= 8):
+        shot_frames_extended.append(len(video_frames) - 1)
 
-        # Distance covered by the ball
-        distance_covered_by_ball_pixels = measure_distance(
-            ball_mini_court_detections[start_frame][1],
-            ball_mini_court_detections[end_frame][1]
-        )
+    for ball_shot_ind in range(len(shot_frames_extended) - 1):
+        start_frame = shot_frames_extended[ball_shot_ind]
+        end_frame = shot_frames_extended[ball_shot_ind + 1]
+        flight_duration_frames = min(24, max(1, end_frame - start_frame))
+        ball_shot_time_in_seconds = flight_duration_frames / 24.0  # 24 fps
+
+        # Safely find start and end positions of ball during the shot
+        ball_start_pos = None
+        for f in range(start_frame, end_frame + 1):
+            if 1 in ball_mini_court_detections[f]:
+                ball_start_pos = ball_mini_court_detections[f][1]
+                break
+
+        ball_end_pos = None
+        for f in range(end_frame, start_frame - 1, -1):
+            if 1 in ball_mini_court_detections[f]:
+                ball_end_pos = ball_mini_court_detections[f][1]
+                break
+
+        if ball_start_pos is not None and ball_end_pos is not None:
+            distance_covered_by_ball_pixels = measure_distance(ball_start_pos, ball_end_pos)
+        else:
+            distance_covered_by_ball_pixels = 0
+
         distance_covered_by_ball_meters = convert_pixel_distance_to_meters(
             distance_covered_by_ball_pixels,
             constants.DOUBLE_LINE_WIDTH,
@@ -225,10 +244,11 @@ def main():
 
         # Determine which player hit the ball
         player_positions = player_mini_court_detections[start_frame]
+        ball_ref_pos = ball_start_pos if ball_start_pos is not None else (0, 0)
         if player_positions:
             player_shot_ball = min(
                 player_positions.keys(),
-                key=lambda p_id: measure_distance(player_positions[p_id], ball_mini_court_detections[start_frame][1])
+                key=lambda p_id: measure_distance(player_positions[p_id], ball_ref_pos)
             )
         else:
             player_shot_ball = 1

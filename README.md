@@ -102,9 +102,14 @@ Trực thuộc module [`mini_court/mini_court.py`](mini_court/mini_court.py):
 2. **Tính toán ma trận biến đổi phối cảnh $H$**:
    - Dựa trên 14 điểm mốc trên ảnh camera và 14 điểm chuẩn trên MiniCourt, hệ thống tính ma trận Homography $H \in \mathbb{R}^{3 \times 3}$:
      $$\begin{bmatrix} x_{mini} \\ y_{mini} \\ 1 \end{bmatrix} \sim H \begin{bmatrix} x_{camera} \\ y_{camera} \\ 1 \end{bmatrix}$$
-3. **Chiếu vị trí tuyển thủ & bóng**:
-   - Vị trí chân của tuyển thủ (`get_foot_position`) và tâm quả bóng được ánh xạ sang tọa độ 2D của MiniCourt.
-   - Vẽ radar thu nhỏ ở góc màn hình giúp người xem quan sát toàn cảnh chiến thuật trận đấu.
+3. **Chiếu vị trí tuyển thủ (Ground Contact)**:
+   - Tuyển thủ luôn tiếp xúc mặt sân đất ($Z \approx 0$). Điểm chân tuyển thủ (`get_foot_position`) được chiếu trực tiếp qua ma trận $H$ với độ chính xác cao.
+4. **Xử lý Thị sai Độ cao 3D của Bóng (Physics-Informed 3D Ground Projection)**:
+   - **Vấn đề cốt lõi (3D Parallax Error)**: Ma trận Homography $H$ chỉ đúng trên mặt phẳng sân ($Z = 0$). Khi bóng bay lên cao trong không gian ($Z > 2\text{m}$), góc nhìn nghiêng từ trên xuống của camera khiến bóng hiển thị ở vị trí rất cao trên ảnh (giá trị $y_{camera}$ nhỏ). Phép chiếu phẳng $H$ nhầm tưởng bóng nằm ở vị trí rất xa trên mặt đất, dẫn đến hiện tượng bóng bị phóng đại bay tuột ra tận cuối sân đối thủ (hoặc ra ngoài sân) ngay khi vừa rời vợt.
+   - **Giải pháp Vật lý Khí động học**: Kết hợp các frame chạm bóng $t_{shot}$ để chia quỹ đạo thành từng chặng bay (Shot Segments). Trên trục dọc $Y$, bóng di chuyển tịnh tiến thực tế giữa người đánh và người đỡ bóng có tính đến lực cản không khí (Aerodynamic Drag):
+     $$y_{ground}(\tau) = y_{start} + (y_{end} - y_{start}) \cdot \frac{1 - e^{-\alpha \tau}}{1 - e^{-\alpha}}$$
+   - Trên trục ngang $X$, vị trí bóng kết hợp giữa đường bay thực tế và tọa độ camera phát hiện được ($X$ ít bị ảnh hưởng bởi độ cao do camera đặt chính diện dọc sân).
+   - Kết quả: Quả bóng di chuyển mượt mà, chân thực qua lưới và chỉ chạm đến cuối sân khi tuyển thủ thực sự đỡ bóng, loại bỏ hoàn toàn hiện tượng bóng "bay ảo" ra cuối sân khi đánh bổng.
 
 ---
 

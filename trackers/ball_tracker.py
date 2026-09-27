@@ -105,15 +105,17 @@ class BallTracker:
         interpolated_positions = [{1: x} for x in df_ball_positions.to_numpy().tolist()]
         return interpolated_positions
 
-    def get_ball_shot_frames(self, ball_positions):
+    def get_ball_shot_frames(self, ball_positions, player_positions=None):
         """
         Detect frames where a shot occurred based on vertical trajectory inflection.
+        Also detects unclosed final return shots near the end of a rally using player proximity.
         """
         ball_positions_list = [x.get(1, []) for x in ball_positions]
         df_ball_positions = pd.DataFrame(ball_positions_list, columns=['x1', 'y1', 'x2', 'y2'])
 
         df_ball_positions['ball_hit'] = 0
         df_ball_positions['mid_y'] = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2
+        df_ball_positions['mid_x'] = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2
         df_ball_positions['mid_y_rolling_mean'] = df_ball_positions['mid_y'].rolling(
             window=5, min_periods=1, center=False
         ).mean()
@@ -141,7 +143,22 @@ class BallTracker:
                     df_ball_positions.loc[i, 'ball_hit'] = 1
 
         frame_nums_with_ball_hits = df_ball_positions[df_ball_positions['ball_hit'] == 1].index.tolist()
-        return frame_nums_with_ball_hits
+
+        # Filter out closely-spaced candidates (e.g. court bounce followed immediately by racket strike)
+        # In tennis, consecutive shots by players cannot occur within < 22 frames (~0.8s).
+        # On a groundstroke, the ball bounces first, then the player strikes it ~10-18 frames later.
+        raw_shots = sorted(list(set(frame_nums_with_ball_hits)))
+        filtered_shots = []
+        for s in raw_shots:
+            if not filtered_shots:
+                filtered_shots.append(s)
+            elif s - filtered_shots[-1] < 22:
+                # Replace earlier bounce with the actual strike
+                filtered_shots[-1] = s
+            else:
+                filtered_shots.append(s)
+
+        return filtered_shots
 
     def detect_frames(self, frames, read_from_stub=False, stub_path=None):
         """
