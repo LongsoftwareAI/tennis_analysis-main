@@ -223,7 +223,7 @@ Tuyển thủ luôn tiếp xúc mặt sân đất ($Z \approx 0$). Điểm chân
 Tại frame chạm bóng $t_{\text{shot}}$, hệ thống so sánh khoảng cách từ vị trí bóng trên MiniCourt tới các tuyển thủ:
 
 ```math
-\text{Player Hit} = \operatorname*{arg\,min}_{i \in \{1, \dots, N\}} d\left(\mathbf{p}_i(t_{\text{shot}}), \mathbf{p}_{\text{ball}}(t_{\text{shot}})\right)
+\text{Player Hit} = \arg\min_{i \in \{1, \dots, N\}} d\left(\mathbf{p}_i(t_{\text{shot}}), \mathbf{p}_{\text{ball}}(t_{\text{shot}})\right)
 ```
 
 #### 2. Vận tốc bóng (Ball Shot Speed):
