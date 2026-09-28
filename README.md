@@ -65,13 +65,13 @@ Trực thuộc module [`trackers/player_tracker.py`](trackers/player_tracker.py)
 
 ---
 
-### Phương pháp 3: Phát hiện bóng & Nhận diện cú đánh (Tennis Ball & Shot Detection)
+### Phương pháp 3: Phát hiện bóng & Nhận diện cú đánh (Tennis Ball & Multi-Pass Shot Detection)
 Trực thuộc module [`trackers/ball_tracker.py`](trackers/ball_tracker.py):
 1. **Mô hình học sâu chuyên biệt**: Sử dụng YOLO26 được huấn luyện trên tập dữ liệu bóng tennis gộp (4,454 ảnh), tối ưu độ nhạy với vật thể nhỏ và hiện tượng mờ do chuyển động (motion blur).
 2. **Nội suy quỹ đạo bóng**: Do bóng tennis bay với vận tốc $>150$ km/h, một số frame bóng có thể bị nhòe hoặc ẩn sau thân vợt. Hệ thống áp dụng nội suy Pandas DataFrame để khôi phục đường bay liên tục.
-3. **Phát hiện thời điểm đánh bóng (Shot Detection)**:
-   - Phân tích đạo hàm tọa độ $y$ của bóng theo thời gian: Quả bóng khi bay từ sân này sang sân kia sẽ đổi chiều di chuyển trên trục dọc ($y$).
-   - Các điểm cực trị (inflection points) trên đồ thị $y(t)$ kèm điều kiện khoảng cách tối thiểu giữa 2 lần đánh giúp xác định chính xác các frame có cú chạm vợt (hit frames).
+3. **Phát hiện thời điểm đánh bóng đa tầng (Multi-Pass Shot Detection)**:
+   - **Tầng 1 (Vertical Trajectory Inflection)**: Phân tích đạo hàm $y(t)$ để tìm các điểm đổi chiều di chuyển dọc sân giữa hai tuyển thủ.
+   - **Tầng 2 (Impulse & Volley/Smash Recovery)**: Nhận diện các cú đánh đặc biệt không làm đổi dấu $v_y$ (ví dụ: đối thủ nhảy đập bóng trên không **Overhead Smash** từ quả lốp bổng, cú bắt vô-lê **Volley** trên lưới, hoặc cú passing winner cuối trận). Thuật toán kết hợp độ gián đoạn vận tốc 2D ($\|\Delta \vec{v}\| \ge 15.0\text{ px/frame}$), góc bẻ hướng vợt ($\Delta \theta \ge 35^\circ$), cự ly tiếp xúc với tuyển thủ ($d \le 150\text{px}$) và quỹ đạo bay tịnh tiến sang phần sân đối phương để phát hiện chính xác mọi cú chạm vợt.
 
 ---
 
@@ -99,19 +99,18 @@ Hệ thống cung cấp 3 chế độ bám vạch sân, trong đó chế độ *
 ---
 
 ### Phương pháp 5: Chiếu Homography lên sân Radar 2D (MiniCourt Projection)
-Trực thuộc module [`mini_court/mini_court.py`](mini_court/mini_court.py):
+Trực thuộc module [`mini_court/`](mini_court/):
 1. **Thiết lập hệ tọa độ thực**: Sân tennis chuẩn quốc tế có kích thước $23.77\text{m} \times 10.97\text{m}$ (đánh đôi) và $23.77\text{m} \times 8.23\text{m}$ (đánh đơn).
 2. **Tính toán ma trận biến đổi phối cảnh $H$**:
    - Dựa trên 14 điểm mốc trên ảnh camera và 14 điểm chuẩn trên MiniCourt, hệ thống tính ma trận Homography $H \in \mathbb{R}^{3 \times 3}$:
      $$\begin{bmatrix} x_{mini} \\ y_{mini} \\ 1 \end{bmatrix} \sim H \begin{bmatrix} x_{camera} \\ y_{camera} \\ 1 \end{bmatrix}$$
 3. **Chiếu vị trí tuyển thủ (Ground Contact)**:
    - Tuyển thủ luôn tiếp xúc mặt sân đất ($Z \approx 0$). Điểm chân tuyển thủ (`get_foot_position`) được chiếu trực tiếp qua ma trận $H$ với độ chính xác cao.
-4. **Xử lý Thị sai Độ cao 3D của Bóng (Physics-Informed 3D Ground Projection)**:
+4. **Xử lý Thị sai Độ cao 3D của Bóng & Căn chỉnh Vượt Lưới (Physics-Informed Trajectory & Net Crossing)**:
    - **Vấn đề cốt lõi (3D Parallax Error)**: Ma trận Homography $H$ chỉ đúng trên mặt phẳng sân ($Z = 0$). Khi bóng bay lên cao trong không gian ($Z > 2\text{m}$), góc nhìn nghiêng từ trên xuống của camera khiến bóng hiển thị ở vị trí rất cao trên ảnh (giá trị $y_{camera}$ nhỏ). Phép chiếu phẳng $H$ nhầm tưởng bóng nằm ở vị trí rất xa trên mặt đất, dẫn đến hiện tượng bóng bị phóng đại bay tuột ra tận cuối sân đối thủ (hoặc ra ngoài sân) ngay khi vừa rời vợt.
-   - **Giải pháp Vật lý Khí động học**: Kết hợp các frame chạm bóng $t_{shot}$ để chia quỹ đạo thành từng chặng bay (Shot Segments). Trên trục dọc $Y$, bóng di chuyển tịnh tiến thực tế giữa người đánh và người đỡ bóng có tính đến lực cản không khí (Aerodynamic Drag):
-     $$y_{ground}(\tau) = y_{start} + (y_{end} - y_{start}) \cdot \frac{1 - e^{-\alpha \tau}}{1 - e^{-\alpha}}$$
-   - Trên trục ngang $X$, vị trí bóng kết hợp giữa đường bay thực tế và tọa độ camera phát hiện được ($X$ ít bị ảnh hưởng bởi độ cao do camera đặt chính diện dọc sân).
-   - Kết quả: Quả bóng di chuyển mượt mà, chân thực qua lưới và chỉ chạm đến cuối sân khi tuyển thủ thực sự đỡ bóng, loại bỏ hoàn toàn hiện tượng bóng "bay ảo" ra cuối sân khi đánh bổng.
+   - **Giải pháp Vật lý Khí động học & Căn chỉnh Vượt Lưới**:
+     - Với các cú đánh qua lưới, thời điểm bóng vượt qua vạch lưới trên MiniCourt được đồng bộ chuẩn xác với hình ảnh truyền hình theo tỷ lệ thời gian bay ($\tau_{net} \approx 0.38$). Bóng tiếp cận lưới tự nhiên và vượt qua vạch lưới màu hổ phách chính xác vào thời điểm mắt người xem thấy bóng bay qua lưới trên video.
+     - **Quỹ đạo bóng đánh trên không (Volley / Overhead Smash)**: Khi đối thủ đỡ bóng trực tiếp trên không (không có điểm nảy đất), quỹ đạo bóng trên MiniCourt bay mượt mà từ vợt người đánh thẳng sang đúng vị trí đứng của đối thủ, đảm bảo khi đối thủ vung vợt thì quả bóng đã ở hoàn toàn bên phần sân đối thủ và nằm ngay tầm vợt, xóa bỏ triệt để hiện tượng bóng bị lag ở sân nhà.
 
 ---
 
@@ -147,7 +146,10 @@ Hệ thống đóng vai trò như một tổ VAR / Hawk-Eye Electronic Line Call
    - Hệ thống xác định người thực hiện cú đánh (Hitter $H \in \{1, 2\}$) và đối thủ (Receiver $R = 3 - H$):
      - **Trường hợp bóng OUT**: Cú đánh của người chơi bay ra ngoài sân $\implies$ Lỗi đánh hỏng (Unforced / Forced Error) $\implies$ **ĐIỂM THUỘC VỀ ĐỐI THỦ (Point to Player $R$)**.
      - **Trường hợp bóng IN (Rally-Ending / Unreturned)**: Bóng rơi hợp lệ trong sân và đối thủ không đỡ được $\implies$ Điểm trực tiếp (Winner) $\implies$ **ĐIỂM THUỘC VỀ NGƯỜI ĐÁNH (Point to Player $H$)**.
-3. **Bộ Hiển thị Trực quan Chuẩn Truyền hình Quốc tế (Broadcast Visualizations)**:
+3. **Khử Điểm Nảy Ảo Trên Không (Airborne Volley/Smash Bounce Filtering)**:
+   - Các pha bóng đối thủ bắt vô-lê hoặc đập bóng bổng trực tiếp trên không không có điểm nảy chạm đất thực tế.
+   - Hệ thống loại trừ hoàn toàn các điểm cực trị ảo khi bóng đang bay lơ lửng trên cao, chỉ ghi nhận chạm đất khi bóng có gia tốc đổi chiều nảy lên thực tế hoặc tại pha bóng kết thúc điểm số (Final shot), tránh hiện tượng báo "Bounce IN" giả khi bóng còn đang trên trời.
+4. **Bộ Hiển thị Trực quan Chuẩn Truyền hình Quốc tế (Broadcast Visualizations)**:
    - **Thẻ Phán Quyết Trọng Tài (Referee Decision Card)**: Hiển thị ở góc dưới bên trái với nền kính mờ (Dark Frosted Glassmorphism), viền phát sáng Neon (Đỏ rực nếu OUT, Xanh nếu IN), huy hiệu lớn `[ OUT ]` hoặc `[ IN ]`, thông số mép vạch `Margin: +128.0 cm (Trong sân)`, và banner vàng `🏆 PHÁN QUYẾT: ĐIỂM CHO PLAYER X`.
    - **Cửa sổ Thu nhỏ Phóng to Vết Bóng (Hawk-Eye 2D Impact Zoom Inset)**: Mô phỏng camera Hawk-Eye truyền hình với mặt sân xanh, vạch vôi trắng (Baseline), vết nén bóng elip màu vàng tennis và thước kẹp Caliper hiển thị khoảng cách cm chính xác.
    - **Vòng Sóng Tiếp Đất Trên Sân Thực (On-Court Ground Impact Ripple)**: Tại vị trí bóng chạm đất trên góc quay camera, hiệu ứng radar lan tỏa (Concentric Shockwaves), đốm sáng va chạm (Impact Flash) và tag nổi `BOUNCE 1: IN (+128cm)` giúp trọng tài và khán giả quan sát trực tiếp quỹ đạo bóng.
@@ -256,12 +258,16 @@ tennis_analysis-main/
 │
 ├── trackers/                      # Module bám vết đối tượng
 │   ├── player_tracker.py          # Player Tracker + Multi-Track Stitching + Net Filtering
-│   └── ball_tracker.py            # Ball Tracker + Interpolation + Shot Detection
+│   └── ball_tracker.py            # Ball Tracker + Multi-Pass Shot Detection (Impulse/Smash)
 │
-├── mini_court/                    # Module bản đồ sân 2D
-│   └── mini_court.py              # Phép biến đổi phối cảnh Homography & Vẽ Radar sân
+├── mini_court/                    # Module bản đồ sân 2D (Đã chuẩn hóa Module Hóa)
+│   ├── mini_court.py              # Lớp điều phối MiniCourt trung tâm
+│   ├── geometry.py                # Định nghĩa thông số kích thước & 28 keypoints sân
+│   ├── projector.py               # Biến đổi Homography, 3D Ground Projection & Đồng bộ vượt lưới
+│   └── drawer.py                  # Vẽ Radar 2D, lưới, sóng xung kích & chỉ số Caliper
 │
 ├── utils/                         # Các hàm tiện ích bổ trợ
+│   ├── referee_utils.py           # ⭐ Trọng tài VAR / Hawk-Eye ELC & Phán quyết điểm
 │   ├── config_utils.py            # Trình đọc & hiển thị cấu hình YAML
 │   ├── video_utils.py             # Đọc & ghi video OpenCV
 │   ├── bbox_utils.py              # Xử lý hình học Bounding Box & khoảng cách
