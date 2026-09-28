@@ -217,6 +217,28 @@ python main.py --court_mode dynamic
 
 Video phân tích hoàn chỉnh sẽ được lưu tại thư mục `output_videos/`.
 
+### 4. Công cụ cắt video clip từ trận đấu đầy đủ (`cut_video_clips.py`)
+Khi bạn có một video trận đấu dài (Full Match) và muốn trích xuất các pha rally đẹp mắt, bạn chỉ cần dùng công cụ cắt clip cực kỳ tiện lợi:
+
+**Cách 1: Chế độ hỏi đáp tương tác trực quan (Khuyến nghị ⭐)**
+```powershell
+python cut_video_clips.py
+```
+- Hệ thống sẽ tự động tìm video nguồn lớn nhất trong thư mục `input_videos/`.
+- Nhập thời gian bắt đầu (dạng `Phút:Giây`, ví dụ `1:25` hoặc nhập số phút rồi enter số giây).
+- Nhập thời gian kết thúc (dạng `Phút:Giây`, ví dụ `1:45` hoặc nhập số phút rồi enter số giây).
+- Nhập tên file muốn đặt (ví dụ `clip_05_doubles`).
+- Hệ thống sẽ cắt video trong vài giây, lưu vào `input_videos/new_input/clips/` và hỏi bạn có muốn tự động cấu hình vào `config.yaml` để chạy `python main.py` phân tích ngay lập tức hay không!
+
+**Cách 2: Cắt nhanh bằng dòng lệnh một dòng (CLI)**
+```powershell
+# Dạng Phút:Giây
+python cut_video_clips.py --start 01:25 --end 01:45 --name clip_doubles.mp4 --update_config
+
+# Hoặc tách biệt rõ phút và giây:
+python cut_video_clips.py --start_min 1 --start_sec 25 --end_min 1 --end_sec 45 --name clip_doubles.mp4
+```
+
 ---
 
 ## 🏋️ Tập dữ liệu & Huấn luyện mô hình (Training & Datasets)
@@ -241,6 +263,7 @@ tennis_analysis-main/
 │
 ├── config.yaml                    # ⭐ File cấu hình trung tâm của toàn bộ hệ thống
 ├── main.py                        # ⭐ Script chạy phân tích chính (Pipeline Entrypoint)
+├── cut_video_clips.py             # ✂️ Công cụ cắt clip nhanh theo Phút:Giây (Quick Clipper)
 ├── requirements.txt               # Danh sách thư viện Python phụ thuộc
 ├── .gitignore                     # Cấu hình bỏ qua models, datasets, cache và videos lớn
 ├── DATASET_STRUCTURE.md           # Tài liệu hướng dẫn cấu trúc dataset chi tiết
