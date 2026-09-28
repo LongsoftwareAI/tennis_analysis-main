@@ -140,14 +140,13 @@ class BallTracker:
                     min_p_dist = float('inf')
                     for check_f in range(max(0, i - 4), min(len(player_positions), i + 5)):
                         p_dict = player_positions[check_f]
-                        for p_id in (1, 2):
-                            if p_id in p_dict and len(p_dict[p_id]) == 4:
-                                p_bbox = p_dict[p_id]
+                        for p_id, p_bbox in p_dict.items():
+                            if len(p_bbox) == 4:
                                 p_center = ((p_bbox[0] + p_bbox[2]) / 2.0, (p_bbox[1] + p_bbox[3]) / 2.0)
                                 dist = np.hypot(bx - p_center[0], by - p_center[1])
                                 if dist < min_p_dist:
                                     min_p_dist = dist
-                    # If ball is far away from both players, it is an airborne apex or flight turning point, not a shot
+                    # If ball is far away from all players, it is an airborne apex or flight turning point, not a shot
                     if min_p_dist > 250.0:
                         continue
 

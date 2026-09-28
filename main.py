@@ -174,7 +174,8 @@ def main():
         )
 
     # 7. Choose Players & Interpolate
-    player_detections = player_tracker.choose_and_filter_players(court_keypoints, player_detections)
+    match_mode = cfg.get("tracking", {}).get("match_mode", "auto")
+    player_detections = player_tracker.choose_and_filter_players(court_keypoints, player_detections, match_mode=match_mode)
     player_detections = player_tracker.interpolate_player_positions(player_detections)
 
     # 8. MiniCourt Homography & Projection
@@ -191,20 +192,14 @@ def main():
         ball_shot_frames=ball_shot_frames
     )
 
-    player_stats_data = [{
-        'frame_num': 0,
-        'player_1_number_of_shots': 0,
-        'player_1_total_shot_speed': 0,
-        'player_1_last_shot_speed': 0,
-        'player_1_total_player_speed': 0,
-        'player_1_last_player_speed': 0,
-
-        'player_2_number_of_shots': 0,
-        'player_2_total_shot_speed': 0,
-        'player_2_last_shot_speed': 0,
-        'player_2_total_player_speed': 0,
-        'player_2_last_player_speed': 0,
-    }]
+    initial_stats = {'frame_num': 0}
+    for p in (1, 2, 3, 4):
+        initial_stats[f'player_{p}_number_of_shots'] = 0
+        initial_stats[f'player_{p}_total_shot_speed'] = 0
+        initial_stats[f'player_{p}_last_shot_speed'] = 0
+        initial_stats[f'player_{p}_total_player_speed'] = 0
+        initial_stats[f'player_{p}_last_player_speed'] = 0
+    player_stats_data = [initial_stats]
     
     shot_frames_extended = list(ball_shot_frames)
     if shot_frames_extended and (len(video_frames) - 1 - shot_frames_extended[-1] >= 8):
@@ -255,7 +250,10 @@ def main():
             player_shot_ball = 1
 
         # Opponent player speed
-        opponent_player_id = 1 if player_shot_ball == 2 else 2
+        hitter_team = 1 if (player_shot_ball % 2 == 1) else 2
+        opponent_team = 2 if hitter_team == 1 else 1
+        opp_candidates = [pid for pid in player_positions if (pid % 2 == opponent_team % 2)]
+        opponent_player_id = opp_candidates[0] if opp_candidates else (2 if hitter_team == 1 else 1)
         if opponent_player_id in player_mini_court_detections[start_frame] and opponent_player_id in player_mini_court_detections[end_frame]:
             distance_covered_by_opponent_pixels = measure_distance(
                 player_mini_court_detections[start_frame][opponent_player_id],
@@ -286,18 +284,14 @@ def main():
     player_stats_data_df = pd.merge(frames_df, player_stats_data_df, on='frame_num', how='left')
     player_stats_data_df = player_stats_data_df.ffill()
 
-    player_stats_data_df['player_1_average_shot_speed'] = (
-        player_stats_data_df['player_1_total_shot_speed'] / player_stats_data_df['player_1_number_of_shots'].replace(0, np.nan)
-    ).fillna(0)
-    player_stats_data_df['player_2_average_shot_speed'] = (
-        player_stats_data_df['player_2_total_shot_speed'] / player_stats_data_df['player_2_number_of_shots'].replace(0, np.nan)
-    ).fillna(0)
-    player_stats_data_df['player_1_average_player_speed'] = (
-        player_stats_data_df['player_1_total_player_speed'] / player_stats_data_df['player_2_number_of_shots'].replace(0, np.nan)
-    ).fillna(0)
-    player_stats_data_df['player_2_average_player_speed'] = (
-        player_stats_data_df['player_2_total_player_speed'] / player_stats_data_df['player_1_number_of_shots'].replace(0, np.nan)
-    ).fillna(0)
+    for p in (1, 2, 3, 4):
+        opp = 2 if p in (1, 3) else 1
+        player_stats_data_df[f'player_{p}_average_shot_speed'] = (
+            player_stats_data_df[f'player_{p}_total_shot_speed'] / player_stats_data_df[f'player_{p}_number_of_shots'].replace(0, np.nan)
+        ).fillna(0)
+        player_stats_data_df[f'player_{p}_average_player_speed'] = (
+            player_stats_data_df[f'player_{p}_total_player_speed'] / player_stats_data_df[f'player_{opp}_number_of_shots'].replace(0, np.nan)
+        ).fillna(0)
 
     # 9.5 Referee Hawk-Eye ELC Decision Analysis
     referee_system = RefereeSystem(mini_court=mini_court)

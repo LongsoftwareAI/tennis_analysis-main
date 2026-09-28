@@ -38,6 +38,13 @@ tracking:
   #   - "static":  Dự đoán cố định từ Frame 0 (nhanh nhất, chỉ dùng khi camera đứng yên).
   court_mode: "cpv"
 
+  # Chế độ trận đấu (Match Mode):
+  #   - "auto":    (Khuyến nghị ⭐) Tự động phát hiện đánh đơn (2 người: P1 gần, P2 xa)
+  #                hoặc đánh đôi (4 người: Team 1 gồm P1, P3 ở sân gần; Team 2 gồm P2, P4 ở sân xa).
+  #   - "singles": Cưỡng bức chế độ Đánh Đơn (2 người chơi).
+  #   - "doubles": Cưỡng bức chế độ Đánh Đôi (4 người chơi - 2 người mỗi đội).
+  match_mode: "auto"
+
   # Bộ đệm dữ liệu (Stub Cache):
   #   - use_stubs: true  -> Tự động đọc dữ liệu đã detect trước đó (trong tracker_stubs/)
   #                         giúp render nhanh trong vài giây.

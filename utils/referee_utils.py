@@ -35,8 +35,10 @@ class RefereeSystem:
                 cam_xs.append(np.nan)
                 cam_ys.append(np.nan)
 
-        singles_left = mini_court.drawing_key_points[16]
-        singles_right = mini_court.drawing_key_points[18]
+        # Check if match is doubles: use doubles outer sidelines instead of singles sidelines
+        is_doubles = getattr(self, 'is_doubles', False)
+        court_left = mini_court.drawing_key_points[0] if is_doubles else mini_court.drawing_key_points[16]
+        court_right = mini_court.drawing_key_points[2] if is_doubles else mini_court.drawing_key_points[18]
         baseline_far = mini_court.court_start_y
         baseline_near = mini_court.court_end_y
         px_to_cm = (constants.DOUBLE_LINE_WIDTH / max(1.0, float(mini_court.get_width_of_mini_court()))) * 100.0
@@ -125,12 +127,12 @@ class RefereeSystem:
                 proj = cv2.perspectiveTransform(pt, H)[0][0]
                 mini_x, mini_y = float(proj[0]), float(proj[1])
             except Exception:
-                mini_x, mini_y = float(singles_left + 20), float(baseline_far + 40)
+                mini_x, mini_y = float(court_left + 20), float(baseline_far + 40)
 
-            is_in = (singles_left - 5 <= mini_x <= singles_right + 5) and (baseline_far - 5 <= mini_y <= baseline_near + 5)
-            margin_side = min(mini_x - singles_left, singles_right - mini_x) * px_to_cm
+            is_in = (court_left - 5 <= mini_x <= court_right + 5) and (baseline_far - 5 <= mini_y <= baseline_near + 5)
+            margin_side = min(mini_x - court_left, court_right - mini_x) * px_to_cm
             margin_base = min(mini_y - baseline_far, baseline_near - mini_y) * px_to_cm
-            min_margin = min(margin_side, margin_base) if is_in else -max(singles_left - mini_x, mini_x - singles_right, baseline_far - mini_y, mini_y - baseline_near) * px_to_cm
+            min_margin = min(margin_side, margin_base) if is_in else -max(court_left - mini_x, mini_x - court_right, baseline_far - mini_y, mini_y - baseline_near) * px_to_cm
 
             bounces.append({
                 'shot_idx': idx,
@@ -160,6 +162,7 @@ class RefereeSystem:
         """
         Evaluate the key rally-ending shot:
         Detects the FIRST BOUNCE in the court.
+        Supports both Singles (2 players) and Doubles (4 players).
         Under ITF Tennis Rules: As long as Bounce 1 lands in court, it is IN.
         If opponent cannot return it before Bounce 2, point is awarded to the hitter as a WINNER.
         """
@@ -168,43 +171,42 @@ class RefereeSystem:
         if not ball_shot_frames or num_frames == 0:
             return None
 
+        # Detect whether this match is Doubles (4 players) or Singles (2 players)
+        is_doubles = False
+        if player_mini_court_detections:
+            max_players = max(len(f) for f in player_mini_court_detections if f)
+            if max_players > 2:
+                is_doubles = True
+        self.is_doubles = is_doubles
+
         # Detect all bounces in the video
         self.detect_all_bounces(ball_shot_frames, ball_detections, court_keypoints, mini_court)
 
         # 1. Identify the rally-ending shot
         final_shot_frame = ball_shot_frames[-1]
 
-        # 2. Determine Hitter (Player 1 or Player 2)
+        # 2. Determine Hitter and Receiver
         net_y = (mini_court.court_start_y + mini_court.court_end_y) / 2.0
         p_dict = player_mini_court_detections[final_shot_frame] if final_shot_frame < len(player_mini_court_detections) else {}
         b_pos = ball_mini_court_detections[final_shot_frame].get(1, None) if final_shot_frame < len(ball_mini_court_detections) else None
 
         if p_dict and b_pos is not None:
-            p1_pos = p_dict.get(1, None)
-            p2_pos = p_dict.get(2, None)
-            if p1_pos and p2_pos:
-                d1 = np.hypot(b_pos[0] - p1_pos[0], b_pos[1] - p1_pos[1])
-                d2 = np.hypot(b_pos[0] - p2_pos[0], b_pos[1] - p2_pos[1])
-                is_p1_hitter = (d1 < d2) or (b_pos[1] > net_y)
-            elif p1_pos:
-                is_p1_hitter = (b_pos[1] > net_y) or (np.hypot(b_pos[0] - p1_pos[0], b_pos[1] - p1_pos[1]) < 80)
-            elif p2_pos:
-                is_p1_hitter = (b_pos[1] > net_y) and not (np.hypot(b_pos[0] - p2_pos[0], b_pos[1] - p2_pos[1]) < 80)
-            else:
-                is_p1_hitter = (b_pos[1] > net_y)
+            # Pick closest player among active players
+            hitter_id = min(p_dict.keys(), key=lambda pid: np.hypot(b_pos[0] - p_dict[pid][0], b_pos[1] - p_dict[pid][1]))
         elif b_pos is not None:
-            is_p1_hitter = (b_pos[1] > net_y)
+            hitter_id = 1 if b_pos[1] > net_y else 2
         else:
-            is_p1_hitter = True
+            hitter_id = 1
 
-        hitter_id = 1 if is_p1_hitter else 2
-        receiver_id = 2 if is_p1_hitter else 1
+        hitter_team = 1 if (hitter_id % 2 == 1) else 2
+        receiver_team = 2 if hitter_team == 1 else 1
+        receiver_id = 2 if hitter_id in (1, 3) else 1
 
         # 3. Court Line Dimensions & Boundaries (Mini-Court coordinates)
-        court_start_y = mini_court.court_start_y  # Far baseline (Y = 70)
-        court_end_y = mini_court.court_end_y      # Near baseline (Y = 530)
-        singles_left = mini_court.drawing_key_points[16]   # Left singles sideline (~1666.2)
-        singles_right = mini_court.drawing_key_points[18]  # Right singles sideline (~1823.8)
+        court_start_y = mini_court.court_start_y  # Far baseline
+        court_end_y = mini_court.court_end_y      # Near baseline
+        court_left = mini_court.drawing_key_points[0] if is_doubles else mini_court.drawing_key_points[16]
+        court_right = mini_court.drawing_key_points[2] if is_doubles else mini_court.drawing_key_points[18]
         court_width_px = mini_court.get_width_of_mini_court()
         px_to_cm = (constants.DOUBLE_LINE_WIDTH / max(1.0, float(court_width_px))) * 100.0
 
@@ -222,34 +224,48 @@ class RefereeSystem:
             landing_pos_mini = (1690.7, 134.7)
             is_first_bounce_in = True
             margin_cm = 128.1
-            nearest_line = "Left Singles Sideline (Vach bien trai)"
+            nearest_line = "Doubles Sideline" if is_doubles else "Left Singles Sideline (Vach bien trai)"
         else:
             landing_frame = final_bounce['frame']
             camera_land_pos = final_bounce['camera_pos']
             landing_pos_mini = final_bounce['mini_pos']
             is_first_bounce_in = final_bounce['is_in']
             margin_cm = final_bounce['margin_cm']
-            nearest_line = "Left Sideline (Bien trai)" if final_bounce['margin_side_cm'] < final_bounce['margin_base_cm'] else "Far Baseline (Cuoi san)"
+            sideline_label = "Doubles Sideline (Bien doi)" if is_doubles else "Left Sideline (Bien trai)"
+            nearest_line = sideline_label if final_bounce['margin_side_cm'] < final_bounce['margin_base_cm'] else "Far Baseline (Cuoi san)"
 
         lx, ly = float(landing_pos_mini[0]), float(landing_pos_mini[1])
 
         # 5. Evaluate Point Outcome under Official ITF Tennis Rules:
-        # Rule: As long as the ball hits the ground (Bounce 1) inside the valid court,
-        # it is a GOOD return (IN). If the opponent does not return it, the HITTER wins the point (WINNER)!
-        if is_first_bounce_in:
-            decision = "IN"
-            point_winner = hitter_id
-            verdict_text = f"DIEM CHO PLAYER {hitter_id}"
-            reason_text = f"Player {hitter_id} an diem Winner (Bong cham dat lan 1 trong san)"
-            scoring_action = "AN DIEM WINNER (PASSING SHOT)"
+        if is_doubles:
+            if is_first_bounce_in:
+                decision = "IN"
+                point_winner = hitter_team
+                verdict_text = f"DIEM CHO TEAM {hitter_team} (P{hitter_id})"
+                reason_text = f"Team {hitter_team} (Player {hitter_id}) an diem Winner trong san"
+                scoring_action = "AN DIEM WINNER (DOUBLES)"
+            else:
+                decision = "OUT"
+                point_winner = receiver_team
+                verdict_text = f"DIEM CHO TEAM {receiver_team}"
+                reason_text = f"Player {hitter_id} (Team {hitter_team}) danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
+                scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
         else:
-            decision = "OUT"
-            point_winner = receiver_id
-            verdict_text = f"DIEM CHO PLAYER {receiver_id}"
-            reason_text = f"Player {hitter_id} danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
-            scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
+            if is_first_bounce_in:
+                decision = "IN"
+                point_winner = hitter_id
+                verdict_text = f"DIEM CHO PLAYER {hitter_id}"
+                reason_text = f"Player {hitter_id} an diem Winner (Bong cham dat lan 1 trong san)"
+                scoring_action = "AN DIEM WINNER (PASSING SHOT)"
+            else:
+                decision = "OUT"
+                point_winner = receiver_id
+                verdict_text = f"DIEM CHO PLAYER {receiver_id}"
+                reason_text = f"Player {hitter_id} danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
+                scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
 
-        second_bounce_pos = (lx - 20.0, float(court_start_y - 18)) if is_p1_hitter else (lx + 20.0, float(court_end_y + 18))
+        is_near_hitter = (hitter_team == 1)
+        second_bounce_pos = (lx - 20.0, float(court_start_y - 18)) if is_near_hitter else (lx + 20.0, float(court_end_y + 18))
         second_bounce_frame = min(num_frames - 1, landing_frame + 10)
 
         self.decision_info = {

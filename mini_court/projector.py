@@ -49,14 +49,18 @@ class MiniCourtProjector:
                 output_player_bboxes_dict[player_id] = (px, py)
             output_player_boxes.append(output_player_bboxes_dict)
 
-        # Extract continuous, interpolated player trajectories
+        # Extract continuous, interpolated player trajectories for all active players
         num_frames = len(player_boxes)
-        p1_pts = [output_player_boxes[f].get(1, (np.nan, np.nan)) for f in range(num_frames)]
-        p2_pts = [output_player_boxes[f].get(2, (np.nan, np.nan)) for f in range(num_frames)]
-        df_p1 = pd.DataFrame(p1_pts, columns=['x', 'y']).interpolate().bfill().ffill()
-        df_p2 = pd.DataFrame(p2_pts, columns=['x', 'y']).interpolate().bfill().ffill()
+        all_pids = sorted(list(set(pid for f in output_player_boxes for pid in f.keys())))
+        if not all_pids:
+            all_pids = [1, 2]
 
-        return output_player_boxes, df_p1, df_p2
+        df_players = {}
+        for pid in all_pids:
+            pts = [output_player_boxes[f].get(pid, (np.nan, np.nan)) for f in range(num_frames)]
+            df_players[pid] = pd.DataFrame(pts, columns=['x', 'y']).interpolate().bfill().ffill()
+
+        return output_player_boxes, df_players
 
     def project_raw_ball(self, ball_boxes, h_matrices, is_dynamic, num_frames, min_x, max_x, min_y, max_y):
         """Compute raw perspective-projected ball positions on mini-court."""
@@ -142,7 +146,7 @@ class MiniCourtProjector:
         num_frames = len(player_boxes)
 
         # 1. Project Players
-        output_player_boxes, df_p1, df_p2 = self.project_players(
+        output_player_boxes, df_players = self.project_players(
             player_boxes, h_matrices, is_dynamic, min_x, max_x, min_y, max_y
         )
 
@@ -170,9 +174,16 @@ class MiniCourtProjector:
 
             for f in range(num_frames):
                 if f < shots[0]:
-                    # Before serve is struck: ball is with Player 1 (server)
-                    p1_pos = (float(df_p1['x'].iloc[f]), float(df_p1['y'].iloc[f]))
-                    final_ball_pts.append(p1_pos)
+                    # Before serve is struck: ball is with the serving player
+                    s0 = shots[0]
+                    bx_raw = float(df_raw['x'].iloc[s0])
+                    by_raw = float(df_raw['y'].iloc[s0])
+                    server_pid = min(df_players.keys(), key=lambda pid: np.hypot(
+                        float(df_players[pid]['x'].iloc[s0]) - bx_raw,
+                        float(df_players[pid]['y'].iloc[s0]) - by_raw
+                    ))
+                    server_pos = (float(df_players[server_pid]['x'].iloc[f]), float(df_players[server_pid]['y'].iloc[f]))
+                    final_ball_pts.append(server_pos)
                     continue
 
                 # Find which shot segment frame f belongs to
@@ -206,10 +217,15 @@ class MiniCourtProjector:
                     else:
                         # Post-bounce rebound
                         if not is_final:
-                            # Rebound directly towards the receiving player
-                            p1_pos = (float(df_p1['x'].iloc[e]), float(df_p1['y'].iloc[e]))
-                            p2_pos = (float(df_p2['x'].iloc[e]), float(df_p2['y'].iloc[e]))
-                            receiver_pos = p1_pos if abs(p1_pos[1] - target_b[1]) < abs(p2_pos[1] - target_b[1]) else p2_pos
+                            # Rebound directly towards the receiving player on the other side of net
+                            opponents = [pid for pid in df_players if (df_players[pid]['y'].iloc[e] - net_y) * (start_pos[1] - net_y) < 0]
+                            if not opponents:
+                                opponents = list(df_players.keys())
+                            receiver_pid = min(opponents, key=lambda pid: np.hypot(
+                                float(df_players[pid]['x'].iloc[e]) - target_b[0],
+                                float(df_players[pid]['y'].iloc[e]) - target_b[1]
+                            ))
+                            receiver_pos = (float(df_players[receiver_pid]['x'].iloc[e]), float(df_players[receiver_pid]['y'].iloc[e]))
                             e_pos = (float(np.clip(receiver_pos[0], min_x, max_x)), float(np.clip(receiver_pos[1], min_y, max_y)))
 
                             tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, e - bounce_f))))
@@ -246,12 +262,14 @@ class MiniCourtProjector:
                 else:
                     # Shot without ground bounce (Volley / Overhead Smash hit out of the air)
                     # Ball travels smoothly from striker (start_pos) across the net directly to receiver (e_pos)
-                    p1_pos = (float(df_p1['x'].iloc[e]), float(df_p1['y'].iloc[e]))
-                    p2_pos = (float(df_p2['x'].iloc[e]), float(df_p2['y'].iloc[e]))
-                    if start_pos[1] > net_y:
-                        receiver_pos = p2_pos if p2_pos[1] < net_y else p1_pos
-                    else:
-                        receiver_pos = p1_pos if p1_pos[1] > net_y else p2_pos
+                    opponents = [pid for pid in df_players if (df_players[pid]['y'].iloc[e] - net_y) * (start_pos[1] - net_y) < 0]
+                    if not opponents:
+                        opponents = list(df_players.keys())
+                    receiver_pid = min(opponents, key=lambda pid: np.hypot(
+                        float(df_players[pid]['x'].iloc[e]) - start_pos[0],
+                        float(df_players[pid]['y'].iloc[e]) - start_pos[1]
+                    ))
+                    receiver_pos = (float(df_players[receiver_pid]['x'].iloc[e]), float(df_players[receiver_pid]['y'].iloc[e]))
                     e_pos = (float(np.clip(receiver_pos[0], min_x, max_x)), float(np.clip(receiver_pos[1], min_y, max_y)))
 
                     xg, yg = self._interpolate_court_flight(f, s, e, start_pos, e_pos, net_y, alpha)

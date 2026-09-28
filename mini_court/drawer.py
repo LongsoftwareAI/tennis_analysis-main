@@ -303,23 +303,26 @@ class MiniCourtDrawer:
                     cv2.circle(frame, (bx - 1, by - 1), 1, (255, 255, 255), -1, cv2.LINE_AA)
 
         else:
-            # Players: Draw P1 (Near Court) and P2 (Far Court)
+            # Players: Draw P1 & P3 (Team 1 - Near Court) and P2 & P4 (Team 2 - Far Court)
+            player_styles = {
+                1: {'fill': (255, 200, 50), 'label': 'P1', 'txt_col': (15, 25, 45)},   # Team 1 (Near): Cyan-Gold
+                3: {'fill': (40, 150, 255), 'label': 'P3', 'txt_col': (15, 25, 45)},   # Team 1 (Near): Amber-Orange
+                2: {'fill': (45, 75, 245),  'label': 'P2', 'txt_col': (255, 255, 255)}, # Team 2 (Far): Coral-Red
+                4: {'fill': (220, 50, 190), 'label': 'P4', 'txt_col': (255, 255, 255)}, # Team 2 (Far): Magenta-Violet
+            }
             for frame_num, frame in enumerate(frames):
                 pos_dict = positions[frame_num] if frame_num < len(positions) else {}
                 for player_id, position in pos_dict.items():
                     px, py = int(position[0]), int(position[1])
-                    if player_id == 1:
-                        # Player 1 (Nadal, near court): Cyan-Gold badge
-                        cv2.circle(frame, (px, py), 7, (255, 200, 50), -1, cv2.LINE_AA)
+                    style = player_styles.get(player_id)
+                    if style:
+                        cv2.circle(frame, (px, py), 7, style['fill'], -1, cv2.LINE_AA)
                         cv2.circle(frame, (px, py), 8, (255, 255, 255), 1, cv2.LINE_AA)
-                        cv2.putText(frame, "P1", (px - 5, py + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (15, 25, 45), 1, cv2.LINE_AA)
-                    elif player_id == 2:
-                        # Player 2 (Verdasco, far court): Coral-Red badge
-                        cv2.circle(frame, (px, py), 7, (45, 75, 245), -1, cv2.LINE_AA)
-                        cv2.circle(frame, (px, py), 8, (255, 255, 255), 1, cv2.LINE_AA)
-                        cv2.putText(frame, "P2", (px - 5, py + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255), 1, cv2.LINE_AA)
+                        cv2.putText(frame, style['label'], (px - 5, py + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.28, style['txt_col'], 1, cv2.LINE_AA)
                     else:
-                        cv2.circle(frame, (px, py), 5, color, -1, cv2.LINE_AA)
+                        cv2.circle(frame, (px, py), 6, color, -1, cv2.LINE_AA)
+                        cv2.circle(frame, (px, py), 7, (255, 255, 255), 1, cv2.LINE_AA)
+                        cv2.putText(frame, f"P{player_id}", (px - 5, py + 3), cv2.FONT_HERSHEY_SIMPLEX, 0.25, (0, 0, 0), 1, cv2.LINE_AA)
 
         return frames
 

@@ -8,7 +8,7 @@ Hệ thống phân tích video trận đấu Tennis tự động, ứng dụng t
 1. [Tổng quan hệ thống](#-tổng-quan-hệ-thống)
 2. [Phương pháp xử lý trong Pipeline (Pipeline Methods)](#-phương-pháp-xử-lý-trong-pipeline-pipeline-methods)
    - [Phương pháp 1: Quản trị cấu hình tập trung (Config-Driven Pipeline)](#phương-pháp-1-quản-trị-cấu-hình-tập-trung-config-driven-pipeline)
-   - [Phương pháp 2: Bám vết người chơi & Nối Track ID (Multi-Track Stitching Player Tracking)](#phương-pháp-2-bám-vết-người-chơi--nối-track-id-multi-track-stitching-player-tracking)
+   - [Phương pháp 2: Bám vết người chơi & Hỗ trợ Đánh Đơn / Đánh Đôi (Singles & Doubles Tracking)](#phương-pháp-2-bám-vết-người-chơi--hỗ-trợ-đánh-đơn--đánh-đôi-singles--doubles-tracking)
    - [Phương pháp 3: Phát hiện bóng & Nhận diện cú đánh (Tennis Ball & Shot Detection)](#phương-pháp-3-phát-hiện-bóng--nhận-diện-cú-đánh-tennis-ball--shot-detection)
    - [Phương pháp 4: Bám vạch sân quang học (Pure CPV Optical Flow Court Tracking)](#phương-pháp-4-bám-vạch-sân-quang-học-pure-cpv-optical-flow-court-tracking)
    - [Phương pháp 5: Chiếu Homography lên sân Radar 2D (MiniCourt Projection)](#phương-pháp-5-chiếu-homography-lên-sân-radar-2d-minicourt-projection)
@@ -26,7 +26,7 @@ Hệ thống được thiết kế theo kiến trúc phân tách độc lập (M
 
 | Module | Công nghệ / Thuật toán | Mục đích |
 | :--- | :--- | :--- |
-| **Player Tracker** | YOLO26 + Multi-Track Stitching + Net Filtering | Bám vết 2 tuyển thủ chính, loại trừ trọng tài & người nhặt bóng, xử lý khi tuyển thủ chạy ra ngoài góc quay |
+| **Player Tracker** | YOLO26 + Multi-Track Stitching + Net Filtering | Bám vết người chơi (Hỗ trợ Đánh đơn 2 người & Đánh đôi 4 người), loại trừ trọng tài & người nhặt bóng |
 | **Ball Tracker** | YOLO26 Custom PyTorch / TF SavedModel | Nhận diện quả bóng tennis nhỏ, mờ do chuyển động tốc độ cao kèm vệt đuôi sao băng (Comet Trail) |
 | **Court Tracker** | ResNet50 TensorFlow + Pure CPV Lucas-Kanade Optical Flow | Định vị 14 điểm mốc sân tennis, bám sát vạch kẻ khi máy quay lia/zoom |
 | **MiniCourt** | Perspective Homography Transform ($3 \times 3$) | Ánh xạ tọa độ từ video góc phối cảnh sang bản đồ 2D chuẩn quốc tế kèm phát hiện bóng ngoài sân |
@@ -45,23 +45,23 @@ Toàn bộ quy trình phân tích được điều khiển bởi file cấu hìn
 
 ---
 
-### Phương pháp 2: Bám vết người chơi & Nối Track ID (Multi-Track Stitching Player Tracking)
+### Phương pháp 2: Bám vết người chơi & Hỗ trợ Đánh Đơn / Đánh Đôi (Singles & Doubles Tracking)
 Trực thuộc module [`trackers/player_tracker.py`](trackers/player_tracker.py):
 1. **Phát hiện & Bám vết (MOT)**: Sử dụng YOLO26 (class `person`) kết hợp ByteTrack gán Track ID qua các khung hình.
-2. **Phân vùng sân theo lưới ($y_{net}$)**:
-   - Sử dụng tọa độ 2 điểm mốc lưới (Keypoint 4 và Keypoint 5) để chia sân thành 2 nửa: nửa sân gần camera ($y > y_{net}$) và nửa sân xa camera ($y < y_{net}$).
-   - Phân loại các Track ID ứng viên thành: Tuyển thủ gần (Player 1) và Tuyển thủ xa (Player 2).
+2. **Hỗ trợ toàn diện Đánh Đơn (2 người) và Đánh Đôi (4 người)**:
+   - **Chế độ Đánh Đơn (Singles)**: Tự động phân chia 2 vận động viên đối kháng: Tuyển thủ gần (Player 1 - P1) và Tuyển thủ xa (Player 2 - P2).
+   - **Chế độ Đánh Đôi (Doubles)**: Tự động phân bổ 4 vận động viên (mỗi đội 2 người):
+     - **Team 1 (Sân gần)**: Player 1 (P1 - Đỏ rực) và Player 3 (P3 - Cam hổ phách).
+     - **Team 2 (Sân xa)**: Player 2 (P2 - Vàng chanh) và Player 4 (P4 - Tím hoa cà).
+   - **Cơ chế Tự động Nhận diện (`match_mode: "auto"`)**: Dựa trên mật độ và số lượng track di chuyển tích cực ở cả 2 nửa sân ($y > y_{net}$ và $y \le y_{net}$), hệ thống tự động nhận biết trận đấu là đánh đơn hay đánh đôi mà không cần cấu hình thủ công.
 3. **Bộ lọc loại trừ trọng tài & người nhặt bóng**:
-   - Trọng tài ghế, trọng tài biên và nhặt bóng thường đứng gần như cố định một chỗ.
-   - Hệ thống tính biên độ di chuyển trục dọc: $\Delta y = \max(y) - \min(y)$.
-   - Các track có $\Delta y < 25\text{px}$ bị loại bỏ; chỉ giữ các track có $\Delta y \ge 25\text{px}$ (vận động viên thực sự chạy trên sân).
-4. **Thuật toán Multi-Track Stitching (Xử lý tuyển thủ văng khỏi màn hình)**:
-   - Trong các pha bóng cứu smash (ví dụ Nadal lùi sâu ra sát rìa phải màn hình), vận động viên có thể bị khuất một phần hoặc ra khỏi góc quay trong vài frame.
-   - Khi quay lại, mô hình tracking sẽ gán một ID mới (ví dụ từ `Track 1` đổi thành `Track 29`).
-   - Thuật toán tự động liên kết các Track ID của cùng một nửa sân theo thời gian:
-     $$\text{Player 1}(t) = \begin{cases} \text{Track 1}(t) & \text{khi Track 1 xuất hiện} \\ \text{Track 29}(t) & \text{khi Track 29 xuất hiện (tái xuất hiện sau khi ra rìa)} \end{cases}$$
-   - Khắc phục hoàn toàn lỗi bounding box bị đứng im ở góc màn hình.
-5. **Nội suy tọa độ (Interpolation)**: Áp dụng phép nội suy tuyến tính (Linear Interpolation) và forward/backward fill để lấp đầy các frame bị mất dấu tạm thời do chuyển động nhanh.
+   - Trọng tài ghế, trọng tài biên và nhặt bóng thường đứng gần như cố định một chỗ hoặc ở sát rìa ngoài sân.
+   - Hệ thống tính biên độ di chuyển: $\Delta y = \max(y) - \min(y)$ và $\Delta x = \max(x) - \min(x)$.
+   - Các track tĩnh có $\Delta y < 20\text{px}$ và $\Delta x < 30\text{px}$ bị loại bỏ; chỉ giữ các track vận động viên thực sự chạy và bao quát sân.
+4. **Thuật toán Multi-Track Stitching (Xử lý tuyển thủ văng khỏi màn hình & Hoán đổi vị trí)**:
+   - Trong các pha bóng cứu smash hoặc di chuyển rộng, vận động viên có thể bị khuất góc quay hoặc đổi Track ID (ví dụ từ `Track 1` sang `Track 29`).
+   - Thuật toán liên tục duy trì vết di chuyển theo khoảng cách không gian (Spatial Proximity Stitching), tự động ghép nối các track ngắt quãng về đúng vị trí slot của tuyển thủ đó.
+5. **Nội suy tọa độ đa luồng (Multi-Player Interpolation)**: Tự động trích xuất chuỗi thời gian cho toàn bộ danh sách tuyển thủ (P1, P2 hoặc P1, P2, P3, P4), áp dụng phép nội suy tuyến tính (Linear Interpolation) và bfill/ffill để đảm bảo không một người chơi nào bị nhấp nháy hoặc biến mất trên từng frame video.
 
 ---
 
