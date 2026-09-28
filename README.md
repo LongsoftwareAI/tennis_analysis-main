@@ -185,66 +185,70 @@ Hệ thống ứng dụng giải pháp bám vạch sân chuẩn công nghiệp *
 
 ### Phương pháp 5: Chiếu Homography lên sân Radar 2D (MiniCourt Projection)
 Trực thuộc module [`mini_court/`](mini_court/):
-1. **Thiết lập hệ tọa độ thực**: Sân tennis chuẩn quốc tế có kích thước $23.77\text{ m} \times 10.97\text{ m}$ (đánh đôi) và $23.77\text{ m} \times 8.23\text{ m}$ (đánh đơn).
-2. **Tính toán ma trận biến đổi phối cảnh $H$**:
-   - Dựa trên 14 điểm mốc trên ảnh camera và 14 điểm chuẩn trên MiniCourt, hệ thống tính ma trận Homography $H \in \mathbb{R}^{3 \times 3}$:
+#### 1. Thiết lập hệ tọa độ thực:
+Sân tennis chuẩn quốc tế có kích thước $23.77\text{ m} \times 10.97\text{ m}$ (đánh đôi) và $23.77\text{ m} \times 8.23\text{ m}$ (đánh đơn).
 
-   $$
-   \begin{bmatrix}
-   x_{\text{mini}} \\
-   y_{\text{mini}} \\
-   1
-   \end{bmatrix}
-   \sim
-   H
-   \begin{bmatrix}
-   x_{\text{camera}} \\
-   y_{\text{camera}} \\
-   1
-   \end{bmatrix}
-   $$
+#### 2. Tính toán ma trận biến đổi phối cảnh $H$:
+Dựa trên 14 điểm mốc trên ảnh camera và 14 điểm chuẩn trên MiniCourt, hệ thống tính ma trận Homography $H \in \mathbb{R}^{3 \times 3}$:
 
-3. **Chiếu vị trí tuyển thủ (Ground Contact)**:
-   - Tuyển thủ luôn tiếp xúc mặt sân đất ($Z \approx 0$). Điểm chân tuyển thủ (`get_foot_position`) được chiếu trực tiếp qua ma trận $H$ với độ chính xác cao.
-4. **Xử lý Thị sai Độ cao 3D của Bóng & Căn chỉnh Vượt Lưới (Physics-Informed Trajectory & Net Crossing)**:
-   - **Vấn đề cốt lõi (3D Parallax Error)**: Ma trận Homography $H$ chỉ đúng trên mặt phẳng sân ($Z = 0$). Khi bóng bay lên cao trong không gian ($Z > 2\text{ m}$), góc nhìn nghiêng từ trên xuống của camera khiến bóng hiển thị ở vị trí rất cao trên ảnh (giá trị $y_{\text{camera}}$ nhỏ). Phép chiếu phẳng $H$ nhầm tưởng bóng nằm ở vị trí rất xa trên mặt đất, dẫn đến hiện tượng bóng bị phóng đại bay tuột ra tận cuối sân đối thủ (hoặc ra ngoài sân) ngay khi vừa rời vợt.
-   - **Giải pháp Vật lý Khí động học & Căn chỉnh Vượt Lưới**:
-     - Với các cú đánh qua lưới, thời điểm bóng vượt qua vạch lưới trên MiniCourt được đồng bộ chuẩn xác với hình ảnh truyền hình theo tỷ lệ thời gian bay ($\tau_{\text{net}} \approx 0.38$). Bóng tiếp cận lưới tự nhiên và vượt qua vạch lưới màu hổ phách chính xác vào thời điểm mắt người xem thấy bóng bay qua lưới trên video.
-     - **Quỹ đạo bóng đánh trên không (Volley / Overhead Smash)**: Khi đối thủ đỡ bóng trực tiếp trên không (không có điểm nảy đất), quỹ đạo bóng trên MiniCourt bay mượt mà từ vợt người đánh thẳng sang đúng vị trí đứng của đối thủ, đảm bảo khi đối thủ vung vợt thì quả bóng đã ở hoàn toàn bên phần sân đối thủ và nằm ngay tầm vợt, xóa bỏ triệt để hiện tượng bóng bị lag ở sân nhà.
+```math
+\begin{bmatrix}
+x_{\text{mini}} \\
+y_{\text{mini}} \\
+1
+\end{bmatrix}
+\sim
+H
+\begin{bmatrix}
+x_{\text{camera}} \\
+y_{\text{camera}} \\
+1
+\end{bmatrix}
+```
+
+#### 3. Chiếu vị trí tuyển thủ (Ground Contact):
+Tuyển thủ luôn tiếp xúc mặt sân đất ($Z \approx 0$). Điểm chân tuyển thủ (`get_foot_position`) được chiếu trực tiếp qua ma trận $H$ với độ chính xác cao.
+
+#### 4. Xử lý Thị sai Độ cao 3D của Bóng & Căn chỉnh Vượt Lưới (Physics-Informed Trajectory & Net Crossing):
+- **Vấn đề cốt lõi (3D Parallax Error)**: Ma trận Homography $H$ chỉ đúng trên mặt phẳng sân ($Z = 0$). Khi bóng bay lên cao trong không gian ($Z > 2\text{ m}$), góc nhìn nghiêng từ trên xuống của camera khiến bóng hiển thị ở vị trí rất cao trên ảnh (giá trị $y_{\text{camera}}$ nhỏ). Phép chiếu phẳng $H$ nhầm tưởng bóng nằm ở vị trí rất xa trên mặt đất, dẫn đến hiện tượng bóng bị phóng đại bay tuột ra tận cuối sân đối thủ (hoặc ra ngoài sân) ngay khi vừa rời vợt.
+- **Giải pháp Vật lý Khí động học & Căn chỉnh Vượt Lưới**:
+  - Với các cú đánh qua lưới, thời điểm bóng vượt qua vạch lưới trên MiniCourt được đồng bộ chuẩn xác với hình ảnh truyền hình theo tỷ lệ thời gian bay ($\tau_{\text{net}} \approx 0.38$). Bóng tiếp cận lưới tự nhiên và vượt qua vạch lưới màu hổ phách chính xác vào thời điểm mắt người xem thấy bóng bay qua lưới trên video.
+  - **Quỹ đạo bóng đánh trên không (Volley / Overhead Smash)**: Khi đối thủ đỡ bóng trực tiếp trên không (không có điểm nảy đất), quỹ đạo bóng trên MiniCourt bay mượt mà từ vợt người đánh thẳng sang đúng vị trí đứng của đối thủ, đảm bảo khi đối thủ vung vợt thì quả bóng đã ở hoàn toàn bên phần sân đối thủ và nằm ngay tầm vợt, xóa bỏ triệt để hiện tượng bóng bị lag ở sân nhà.
 
 ---
 
 ### Phương pháp 6: Tính toán chỉ số vật lý & Tốc độ thi đấu (Match Analytics)
-1. **Định danh tuyển thủ thực hiện cú đánh**:
-   - Tại frame chạm bóng $t_{\text{shot}}$, hệ thống so sánh khoảng cách từ vị trí bóng trên MiniCourt tới các tuyển thủ:
 
-   $$
-   \text{Player Hit} = \operatorname*{arg\,min}_{i \in \{1, \dots, N\}} d\left(\mathbf{p}_i(t_{\text{shot}}), \mathbf{p}_{\text{ball}}(t_{\text{shot}})\right)
-   $$
+#### 1. Định danh tuyển thủ thực hiện cú đánh:
+Tại frame chạm bóng $t_{\text{shot}}$, hệ thống so sánh khoảng cách từ vị trí bóng trên MiniCourt tới các tuyển thủ:
 
-2. **Vận tốc bóng (Ball Shot Speed)**:
-   - Đo quãng đường thực tế mà quả bóng bay giữa 2 lần đánh:
+```math
+\text{Player Hit} = \operatorname*{arg\,min}_{i \in \{1, \dots, N\}} d\left(\mathbf{p}_i(t_{\text{shot}}), \mathbf{p}_{\text{ball}}(t_{\text{shot}})\right)
+```
 
-   $$
-   s_{\text{meters}} = s_{\text{pixels}} \times \frac{10.97\text{ m}}{W_{\text{court, px}}}
-   $$
+#### 2. Vận tốc bóng (Ball Shot Speed):
+Đo quãng đường thực tế mà quả bóng bay giữa 2 lần đánh:
 
-   - Vận tốc tính theo thời gian bay $\Delta t$:
+```math
+s_{\text{meters}} = s_{\text{pixels}} \times \frac{10.97\text{ m}}{W_{\text{court, px}}}
+```
 
-   $$
-   v_{\text{ball}} = \left(\frac{s_{\text{meters}}}{\Delta t}\right) \times 3.6 \quad \text{(km/h)}
-   $$
+Vận tốc tính theo thời gian bay $\Delta t$:
 
-3. **Vận tốc di chuyển của tuyển thủ (Player Speed)**:
-   - Đo quãng đường tuyển thủ đối phương di chuyển trong lúc quả bóng đang bay để chuẩn bị đỡ bóng:
+```math
+v_{\text{ball}} = \left(\frac{s_{\text{meters}}}{\Delta t}\right) \times 3.6 \quad \text{(km/h)}
+```
 
-   $$
-   v_{\text{player}} = \left(\frac{d_{\text{opponent}}}{\Delta t}\right) \times 3.6 \quad \text{(km/h)}
-   $$
+#### 3. Vận tốc di chuyển của tuyển thủ (Player Speed):
+Đo quãng đường tuyển thủ đối phương di chuyển trong lúc quả bóng đang bay để chuẩn bị đỡ bóng:
 
-4. **Bảng thống kê tích lũy**:
-   - Sử dụng Pandas DataFrame để tính tốc độ trung bình cú đánh, tốc độ chạy trung bình và tổng số cú đánh của mỗi tuyển thủ.
-   - Hiển thị bảng số liệu trực tiếp trên góc video bằng module [`utils/player_stats_drawer_utils.py`](utils/player_stats_drawer_utils.py).
+```math
+v_{\text{player}} = \left(\frac{d_{\text{opponent}}}{\Delta t}\right) \times 3.6 \quad \text{(km/h)}
+```
+
+#### 4. Bảng thống kê tích lũy:
+- Sử dụng Pandas DataFrame để tính tốc độ trung bình cú đánh, tốc độ chạy trung bình và tổng số cú đánh của mỗi tuyển thủ.
+- Hiển thị bảng số liệu trực tiếp trên góc video bằng module [`utils/player_stats_drawer_utils.py`](utils/player_stats_drawer_utils.py).
 
 ---
 
