@@ -8,11 +8,11 @@ Hệ thống phân tích video trận đấu Tennis tự động, ứng dụng t
 
 Hệ thống trích xuất và hiển thị kết quả phân tích theo chuẩn truyền hình trực tiếp (Broadcast Telemetry). Dưới đây là 2 video kết quả tiêu biểu của hệ thống:
 
-| 🎾 Clip 1: Nadal vs Verdasco (Tốc độ cao & Hawk-Eye OUT) | 🎾 Clip 2: Zverev vs Murray (Đôi công cuối sân & Phán quyết IN) |
+| 🎾 Clip 1: Nadal vs Verdasco (Tốc độ cao & Hawk-Eye IN) | 🎾 Clip 2: Zverev vs Murray (Đôi công cuối sân & Phán quyết IN) |
 | :---: | :---: |
 | ![Clip 1 Demo](docs/assets/clip_01_demo.gif) | ![Clip 2 Demo](docs/assets/clip_02_demo.gif) |
 | 🎥 **[Phát Video Full HD Clip 1 (MP4)](docs/assets/clip_01_demo.mp4)** | 🎥 **[Phát Video Full HD Clip 2 (MP4)](docs/assets/clip_02_demo.mp4)** |
-| *Pha bóng tốc độ cao 153 km/h, bóng nảy OUT -118cm, Mini-Court 2D Radar, bảng thống kê tích lũy.* | *Pha đôi công giằng co cuối sân, bóng nảy IN +128cm, hiệu ứng sóng xung kích radar, đo cự ly Caliper.* |
+| *Pha bóng tốc độ cao 153 km/h, bóng nảy IN +128.0cm (Passing Shot Winner cho Verdasco), Mini-Court 2D Radar, bảng thống kê tích lũy.* | *Pha đôi công giằng co cuối sân, bóng nảy IN +211.4cm (Passing Shot Winner), hiệu ứng sóng xung kích radar, đo cự ly Caliper.* |
 
 > [!TIP]
 > **Cách xem video trên GitHub**:
