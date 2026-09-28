@@ -73,16 +73,19 @@ class MiniCourt:
         player_boxes,
         ball_boxes,
         original_court_key_points,
-        ball_shot_frames=None
+        ball_shot_frames=None,
+        all_bounces=None
     ):
         """Convert player and ball bounding boxes using homography and aerodynamic ground projection."""
         existing_info = self.ball_decision_info if self.ball_decision_info is not None else self.ball_out_info
+        bounces = all_bounces if all_bounces is not None else self.all_bounces
         player_pts, ball_pts, dec_info = self.projector.convert_bounding_boxes_to_mini_court_coordinates(
             player_boxes,
             ball_boxes,
             original_court_key_points,
             ball_shot_frames=ball_shot_frames,
-            existing_decision_info=existing_info
+            existing_decision_info=existing_info,
+            all_bounces=bounces
         )
         if self.ball_decision_info is None and dec_info is not None:
             self.ball_decision_info = dec_info

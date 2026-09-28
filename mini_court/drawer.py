@@ -69,15 +69,44 @@ class MiniCourtDrawer:
             end_point = (int(self.geom.drawing_key_points[line[1] * 2]), int(self.geom.drawing_key_points[line[1] * 2 + 1]))
             cv2.line(frame, start_point, end_point, (245, 248, 255), 2, cv2.LINE_AA)
 
-        # 4. Realistic Net with center strap and posts
+        # 4. Realistic Tournament Net with vibrant high-visibility cable, mesh, and center strap
         net_y = int((self.geom.drawing_key_points[1] + self.geom.drawing_key_points[5]) / 2)
         net_start = (int(self.geom.court_start_x), net_y)
         net_end = (int(self.geom.court_end_x), net_y)
-        cv2.line(frame, (net_start[0], net_y + 1), (net_end[0], net_y + 1), (20, 20, 25), 2, cv2.LINE_AA)  # shadow
-        cv2.line(frame, net_start, net_end, (220, 225, 235), 2, cv2.LINE_AA)  # white net band
-        cv2.circle(frame, net_start, 4, (240, 180, 50), -1, cv2.LINE_AA)  # net posts
-        cv2.circle(frame, net_end, 4, (240, 180, 50), -1, cv2.LINE_AA)
-        cv2.putText(frame, "NET", (int((self.geom.court_start_x + self.geom.court_end_x) / 2) - 10, net_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.28, (170, 185, 205), 1, cv2.LINE_AA)
+
+        # Net mesh textured band
+        sub_net = frame[max(0, net_y - 3):min(frame.shape[0], net_y + 4), net_start[0]:net_end[0]]
+        if sub_net.shape[0] > 0 and sub_net.shape[1] > 0:
+            mesh_overlay = np.full_like(sub_net, (15, 20, 30), dtype=np.uint8)
+            cv2.addWeighted(mesh_overlay, 0.45, sub_net, 0.55, 0, sub_net)
+            frame[max(0, net_y - 3):min(frame.shape[0], net_y + 4), net_start[0]:net_end[0]] = sub_net
+
+        # Vertical mesh ticks
+        for tx in range(net_start[0] + 6, net_end[0], 8):
+            cv2.line(frame, (tx, net_y - 3), (tx, net_y + 3), (90, 110, 140), 1)
+
+        # High-visibility vibrant Amber-Gold Net Top Cable (chống lẫn với vạch trắng của sân)
+        net_cable_color = (30, 185, 255)  # Vibrant Electric Amber / Gold (BGR)
+        cv2.line(frame, (net_start[0], net_y + 1), (net_end[0], net_y + 1), (10, 15, 25), 3, cv2.LINE_AA)  # Shadow
+        cv2.line(frame, net_start, net_end, net_cable_color, 2, cv2.LINE_AA)  # Amber cable
+
+        # Net posts at sidelines
+        cv2.circle(frame, net_start, 5, (10, 15, 25), -1, cv2.LINE_AA)
+        cv2.circle(frame, net_start, 4, (30, 195, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, net_end, 5, (10, 15, 25), -1, cv2.LINE_AA)
+        cv2.circle(frame, net_end, 4, (30, 195, 255), -1, cv2.LINE_AA)
+
+        # Center strap (băng trắng chính giữa lưới)
+        center_x = int((self.geom.court_start_x + self.geom.court_end_x) / 2)
+        cv2.line(frame, (center_x, net_y - 4), (center_x, net_y + 5), (255, 255, 255), 2, cv2.LINE_AA)
+
+        # Distinct high-contrast NET pill badge
+        badge_w, badge_h = 32, 14
+        bx1 = center_x - badge_w // 2
+        by1 = net_y - badge_h - 4
+        cv2.rectangle(frame, (bx1, by1), (bx1 + badge_w, by1 + badge_h), (18, 24, 38), -1)
+        cv2.rectangle(frame, (bx1, by1), (bx1 + badge_w, by1 + badge_h), net_cable_color, 1)
+        cv2.putText(frame, "NET", (bx1 + 5, by1 + badge_h - 3), cv2.FONT_HERSHEY_DUPLEX, 0.30, (255, 255, 255), 1, cv2.LINE_AA)
 
         # 5. Court orientation labels
         cv2.putText(frame, "FAR COURT", (csx + 4, csy - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (130, 150, 180), 1, cv2.LINE_AA)
@@ -98,17 +127,17 @@ class MiniCourtDrawer:
             for b in all_bounces:
                 b_frame = b.get('frame', -999)
                 age = frame_num - b_frame
-                if 0 <= age <= 18:
+                if 0 <= age <= 22:
                     mpos = b.get('mini_pos', None)
                     if mpos is None:
                         continue
                     # Only render bounce ripples within the court playing perimeter
-                    if mpos[1] < self.geom.court_start_y - 10 or mpos[1] > self.geom.court_end_y + 10:
+                    if mpos[1] < self.geom.court_start_y - 20 or mpos[1] > self.geom.court_end_y + 20:
                         continue
-                    if mpos[0] < self.geom.court_start_x - 10 or mpos[0] > self.geom.court_end_x + 10:
+                    if mpos[0] < self.geom.court_start_x - 20 or mpos[0] > self.geom.court_end_x + 20:
                         continue
-                    bx = int(np.clip(mpos[0], self.geom.court_start_x - 5, self.geom.court_end_x + 5))
-                    by = int(np.clip(mpos[1], self.geom.court_start_y, self.geom.court_end_y))
+                    bx = int(np.clip(mpos[0], self.geom.court_start_x - 10, self.geom.court_end_x + 10))
+                    by = int(np.clip(mpos[1], self.geom.court_start_y - 5, self.geom.court_end_y + 5))
                     b_is_in = b.get('is_in', True)
                     b_col = (40, 240, 100) if b_is_in else (30, 30, 235)
                     b_glow = (100, 255, 160) if b_is_in else (80, 80, 255)

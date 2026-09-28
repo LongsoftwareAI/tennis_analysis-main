@@ -310,6 +310,16 @@ def main():
         mini_court=mini_court
     )
 
+    # Re-synchronize mini court and ball detections with referee decision info and all detected bounces
+    if decision_info is not None:
+        mini_court.set_referee_decision(decision_info, all_bounces=referee_system.all_bounces)
+        _, ball_mini_court_detections = mini_court.convert_bounding_boxes_to_mini_court_coordinates(
+            player_detections,
+            ball_detections,
+            court_keypoints,
+            ball_shot_frames=ball_shot_frames
+        )
+
     # 10. Render Outputs
     print("Drawing detections and visualizations...")
     vis_cfg = cfg.get("visualization", {})

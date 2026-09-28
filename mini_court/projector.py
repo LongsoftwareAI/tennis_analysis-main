@@ -83,13 +83,41 @@ class MiniCourtProjector:
         df_raw = pd.DataFrame(raw_ball_mini_pts, columns=['x', 'y'], dtype=np.float64).interpolate(method='linear').bfill().ffill()
         return df_raw
 
+    def _interpolate_court_flight(self, f, t_start, t_end, p_start, p_end, net_y, alpha=0.35):
+        """
+        Physics-based court flight interpolation:
+        If trajectory crosses the net, aligns the net-crossing timing at tau = 0.38
+        matching physical ball depth traversal and TV broadcast camera view.
+        """
+        span = max(1, t_end - t_start)
+        tau = min(1.0, max(0.0, float(f - t_start) / float(span)))
+        xg = p_start[0] + (p_end[0] - p_start[0]) * tau
+
+        if (p_start[1] - net_y) * (p_end[1] - net_y) < 0:
+            tau_net = 0.38
+            f_net = t_start + max(1, int(round(tau_net * span)))
+            if f <= f_net:
+                tau1 = float(f - t_start) / float(max(1, f_net - t_start))
+                t_drag1 = (1.0 - np.exp(-0.30 * tau1)) / (1.0 - np.exp(-0.30))
+                yg = p_start[1] + (net_y - p_start[1]) * t_drag1
+            else:
+                tau2 = float(f - f_net) / float(max(1, t_end - f_net))
+                t_drag2 = (1.0 - np.exp(-0.35 * tau2)) / (1.0 - np.exp(-0.35))
+                yg = net_y + (p_end[1] - net_y) * t_drag2
+        else:
+            tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
+            yg = p_start[1] + (p_end[1] - p_start[1]) * tau_drag
+
+        return xg, yg
+
     def convert_bounding_boxes_to_mini_court_coordinates(
         self,
         player_boxes,
         ball_boxes,
         original_court_key_points,
         ball_shot_frames=None,
-        existing_decision_info=None
+        existing_decision_info=None,
+        all_bounces=None
     ):
         """
         Convert player and ball bounding boxes to mini-court coordinates using
@@ -128,126 +156,107 @@ class MiniCourtProjector:
         decision_info = existing_decision_info
         output_ball_boxes = []
 
-        if shots is not None and len(shots) >= 2:
+        if shots is not None and len(shots) >= 1:
             final_ball_pts = []
             net_y = (self.geom.court_start_y + self.geom.court_end_y) / 2.0
+
+            # Map detected bounces by shot index if provided
+            bounce_map = {}
+            if all_bounces:
+                for b in all_bounces:
+                    bounce_map[b['shot_idx']] = b
+
+            alpha = 0.35
 
             for f in range(num_frames):
                 if f < shots[0]:
                     # Before serve is struck: ball is with Player 1 (server)
                     p1_pos = (float(df_p1['x'].iloc[f]), float(df_p1['y'].iloc[f]))
                     final_ball_pts.append(p1_pos)
-                elif f >= shots[-1]:
-                    # Final shot of rally:
-                    s = shots[-1]
-                    p1_s = (float(df_p1['x'].iloc[s]), float(df_p1['y'].iloc[s]))
-                    p2_s = (float(df_p2['x'].iloc[s]), float(df_p2['y'].iloc[s]))
-                    b_s = (float(df_raw['x'].iloc[s]), float(df_raw['y'].iloc[s]))
-                    d1 = np.hypot(b_s[0] - p1_s[0], b_s[1] - p1_s[1])
-                    d2 = np.hypot(b_s[0] - p2_s[0], b_s[1] - p2_s[1])
+                    continue
 
-                    is_p1_hitter = (d1 < d2) or (b_s[1] > net_y)
-                    singles_left = self.geom.drawing_key_points[16]
-                    singles_right = self.geom.drawing_key_points[18]
+                # Find which shot segment frame f belongs to
+                seg_idx = len(shots) - 1
+                for i in range(len(shots) - 1):
+                    if shots[i] <= f < shots[i + 1]:
+                        seg_idx = i
+                        break
 
-                    # First bounce occurs ~11 frames after stroke
-                    bounce1_f = min(num_frames - 1, s + 11)
-                    bounce1_x = float(df_raw['x'].iloc[bounce1_f])
-                    bounce1_y = float(df_raw['y'].iloc[bounce1_f])
+                s = shots[seg_idx]
+                is_final = (seg_idx == len(shots) - 1)
+                e = shots[seg_idx + 1] if not is_final else num_frames - 1
 
-                    # Check if Bounce 1 is IN the court
-                    is_bounce1_in = (singles_left <= bounce1_x <= singles_right) and (self.geom.court_start_y <= bounce1_y <= self.geom.court_end_y)
-
-                    if is_bounce1_in:
-                        # Ball hits the court IN (WINNER)!
-                        target_b1 = (float(np.clip(bounce1_x, min_x, max_x)), float(np.clip(bounce1_y, min_y, max_y)))
-                        rebound_f = min(num_frames - 1, s + 22)
-                        rebound_x = float(df_raw['x'].iloc[rebound_f])
-                        rebound_y = (self.geom.court_start_y - 18) if is_p1_hitter else (self.geom.court_end_y + 18)
-                        rebound_target = (float(np.clip(rebound_x, min_x, max_x)), float(rebound_y))
-
-                        if decision_info is None:
-                            px_to_cm = (constants.DOUBLE_LINE_WIDTH / float(self.geom.court_drawing_width)) * 100.0
-                            margin_side = min(target_b1[0] - singles_left, singles_right - target_b1[0]) * px_to_cm
-                            decision_info = {
-                                'type': 'WINNER_IN',
-                                'bounce_frame': bounce1_f,
-                                'first_bounce_pos': target_b1,
-                                'second_bounce_pos': rebound_target,
-                                'second_bounce_frame': rebound_f,
-                                'margin_cm': margin_side
-                            }
-
-                        start_pos = (b_s[0], p1_s[1] if is_p1_hitter else p2_s[1])
-                        if f <= bounce1_f:
-                            tau = min(1.0, float(f - s) / float(max(1, bounce1_f - s)))
-                            alpha = 0.35
-                            tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
-                            yg = start_pos[1] + (target_b1[1] - start_pos[1]) * tau_drag
-                            xg = start_pos[0] + (target_b1[0] - start_pos[0]) * tau
-                        else:
-                            tau2 = min(1.0, float(f - bounce1_f) / float(max(1, rebound_f - bounce1_f)))
-                            yg = target_b1[1] + (rebound_target[1] - target_b1[1]) * tau2
-                            xg = target_b1[0] + (rebound_target[0] - target_b1[0]) * tau2
-
-                        final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(yg)))
-                    else:
-                        # Ball flies directly OUT on first landing
-                        flight_len = min(22, max(12, num_frames - s))
-                        land_f = min(num_frames - 1, s + flight_len)
-                        target_x = float(df_raw['x'].iloc[land_f])
-                        target_y = (self.geom.court_start_y - 18) if is_p1_hitter else (self.geom.court_end_y + 18)
-                        target_pos = (float(np.clip(target_x, min_x, max_x)), float(target_y))
-
-                        tau = min(1.0, float(f - s) / float(flight_len))
-                        alpha = 0.35
-                        tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
-                        start_pos = (b_s[0], p1_s[1] if is_p1_hitter else p2_s[1])
-                        yg = start_pos[1] + (target_pos[1] - start_pos[1]) * tau_drag
-                        xg = start_pos[0] + (target_pos[0] - start_pos[0]) * tau
-
-                        if decision_info is None and ((is_p1_hitter and yg <= self.geom.court_start_y) or (not is_p1_hitter and yg >= self.geom.court_end_y)):
-                            decision_info = {
-                                'type': 'OUT',
-                                'bounce_frame': f,
-                                'landing_pos': target_pos,
-                                'margin_cm': 94.0
-                            }
-                        final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(yg)))
+                # Continuous stroke position: seamless transition from previous frame
+                if seg_idx > 0 and len(final_ball_pts) >= s:
+                    start_pos = final_ball_pts[s - 1]
                 else:
-                    # Rally intervals
-                    seg_idx = 0
-                    for i in range(len(shots) - 1):
-                        if shots[i] <= f <= shots[i + 1]:
-                            seg_idx = i
-                            break
-                    s, e = shots[seg_idx], shots[seg_idx + 1]
-                    p1_s = (float(df_p1['x'].iloc[s]), float(df_p1['y'].iloc[s]))
-                    p2_s = (float(df_p2['x'].iloc[s]), float(df_p2['y'].iloc[s]))
-                    b_s = (float(df_raw['x'].iloc[s]), float(df_raw['y'].iloc[s]))
-                    d1 = np.hypot(b_s[0] - p1_s[0], b_s[1] - p1_s[1])
-                    d2 = np.hypot(b_s[0] - p2_s[0], b_s[1] - p2_s[1])
+                    start_pos = (float(df_raw['x'].iloc[s]), float(df_raw['y'].iloc[s]))
+                start_pos = (float(np.clip(start_pos[0], min_x, max_x)), float(np.clip(start_pos[1], min_y, max_y)))
 
-                    if d1 < d2 or b_s[1] > net_y:
-                        start_pos = p1_s
-                        end_pos = (float(df_p2['x'].iloc[e]), float(df_p2['y'].iloc[e]))
+                # Determine bounce frame and position for this shot
+                b_info = bounce_map.get(seg_idx)
+                if b_info is not None:
+                    bounce_f = b_info.get('peak_frame', b_info.get('frame', min(e - 2, s + 11)))
+                    target_b = b_info.get('mini_pos', (float(df_raw['x'].iloc[bounce_f]), float(df_raw['y'].iloc[bounce_f])))
+                    target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
+
+                    if f <= bounce_f:
+                        # Flight towards ground bounce
+                        xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
                     else:
-                        start_pos = p2_s
-                        end_pos = (float(df_p1['x'].iloc[e]), float(df_p1['y'].iloc[e]))
+                        # Post-bounce rebound
+                        if not is_final:
+                            # Rebound directly towards the receiving player
+                            p1_pos = (float(df_p1['x'].iloc[e]), float(df_p1['y'].iloc[e]))
+                            p2_pos = (float(df_p2['x'].iloc[e]), float(df_p2['y'].iloc[e]))
+                            receiver_pos = p1_pos if abs(p1_pos[1] - target_b[1]) < abs(p2_pos[1] - target_b[1]) else p2_pos
+                            e_pos = (float(np.clip(receiver_pos[0], min_x, max_x)), float(np.clip(receiver_pos[1], min_y, max_y)))
 
-                    seg_len = max(1, e - s)
-                    tau = float(f - s) / float(seg_len)
+                            tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, e - bounce_f))))
+                            xg = target_b[0] + (e_pos[0] - target_b[0]) * tau2
+                            yg = target_b[1] + (e_pos[1] - target_b[1]) * tau2
+                        else:
+                            if decision_info is not None:
+                                rebound_f = decision_info.get('second_bounce_frame', min(num_frames - 1, bounce_f + 11))
+                                rebound_target = decision_info.get('second_bounce_pos', (target_b[0], float(self.geom.court_start_y - 18 if target_b[1] < start_pos[1] else self.geom.court_end_y + 18)))
+                            else:
+                                rebound_f = min(num_frames - 1, bounce_f + 12)
+                                y_reb = (self.geom.court_start_y - 18) if target_b[1] < start_pos[1] else (self.geom.court_end_y + 18)
+                                x_reb = target_b[0] + (target_b[0] - start_pos[0]) * 0.25
+                                rebound_target = (float(np.clip(x_reb, min_x, max_x)), float(y_reb))
 
-                    # Aerodynamic drag progression
-                    alpha = 0.35
-                    tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
+                            tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, rebound_f - bounce_f))))
+                            xg = target_b[0] + (rebound_target[0] - target_b[0]) * tau2
+                            yg = target_b[1] + (rebound_target[1] - target_b[1]) * tau2
 
-                    y_ground = start_pos[1] + (end_pos[1] - start_pos[1]) * tau_drag
-                    x_linear = start_pos[0] + (end_pos[0] - start_pos[0]) * tau
-                    x_det = float(df_raw['x'].iloc[f])
-                    x_ground = 0.35 * x_linear + 0.65 * x_det
+                elif is_final and decision_info is not None:
+                    bounce_f = decision_info.get('landing_frame', decision_info.get('bounce_frame', min(e - 2, s + 11)))
+                    target_b = decision_info.get('landing_pos_mini', decision_info.get('first_bounce_pos', (float(df_raw['x'].iloc[bounce_f]), float(df_raw['y'].iloc[bounce_f]))))
+                    target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
 
-                    final_ball_pts.append((float(np.clip(x_ground, min_x, max_x)), float(np.clip(y_ground, min_y, max_y))))
+                    if f <= bounce_f:
+                        xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
+                    else:
+                        rebound_f = decision_info.get('second_bounce_frame', min(num_frames - 1, bounce_f + 11))
+                        rebound_target = decision_info.get('second_bounce_pos', (target_b[0], float(self.geom.court_start_y - 18 if target_b[1] < start_pos[1] else self.geom.court_end_y + 18)))
+                        tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, rebound_f - bounce_f))))
+                        xg = target_b[0] + (rebound_target[0] - target_b[0]) * tau2
+                        yg = target_b[1] + (rebound_target[1] - target_b[1]) * tau2
+
+                else:
+                    # Shot without ground bounce (Volley / Overhead Smash hit out of the air)
+                    # Ball travels smoothly from striker (start_pos) across the net directly to receiver (e_pos)
+                    p1_pos = (float(df_p1['x'].iloc[e]), float(df_p1['y'].iloc[e]))
+                    p2_pos = (float(df_p2['x'].iloc[e]), float(df_p2['y'].iloc[e]))
+                    if start_pos[1] > net_y:
+                        receiver_pos = p2_pos if p2_pos[1] < net_y else p1_pos
+                    else:
+                        receiver_pos = p1_pos if p1_pos[1] > net_y else p2_pos
+                    e_pos = (float(np.clip(receiver_pos[0], min_x, max_x)), float(np.clip(receiver_pos[1], min_y, max_y)))
+
+                    xg, yg = self._interpolate_court_flight(f, s, e, start_pos, e_pos, net_y, alpha)
+
+                final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(np.clip(yg, min_y, max_y))))
 
             df_final = pd.DataFrame(final_ball_pts, columns=['x', 'y'], dtype=np.float64).rolling(window=3, min_periods=1, center=True).mean()
         else:

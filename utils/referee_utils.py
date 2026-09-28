@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pandas as pd
 import constants
 
 class RefereeSystem:
@@ -40,51 +41,74 @@ class RefereeSystem:
         baseline_near = mini_court.court_end_y
         px_to_cm = (constants.DOUBLE_LINE_WIDTH / max(1.0, float(mini_court.get_width_of_mini_court()))) * 100.0
 
+        # Court camera Y geometry
+        k0 = court_keypoints[0] if (isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > 0 and hasattr(court_keypoints[0], '__len__')) else court_keypoints
+        try:
+            kps_y = [k0[2 * j + 1] for j in range(14)]
+            court_min_y = min(kps_y) - 30.0
+            court_max_y = max(kps_y) + 50.0
+            net_cam_y = (k0[17] + k0[19]) / 2.0 if len(k0) >= 20 else (court_min_y + court_max_y) / 2.0
+        except Exception:
+            court_min_y = 220.0
+            court_max_y = 900.0
+            net_cam_y = 450.0
+
+        smooth_ys = pd.Series(cam_ys).rolling(window=3, min_periods=1, center=True).mean().values
+
         for idx, s in enumerate(ball_shot_frames):
             is_final = (idx == len(ball_shot_frames) - 1)
             next_s = ball_shot_frames[idx + 1] if not is_final else num_frames - 1
             w_start = min(num_frames - 1, s + 5)
-            w_end = min(num_frames - 1, min(next_s - 1, s + 22)) if not is_final else min(num_frames - 1, s + 24)
+            w_end = min(num_frames - 1, next_s - 3) if not is_final else min(num_frames - 1, s + 35)
             if w_end <= w_start:
                 continue
 
             # Look for local inflection / bounce point where ball touches court
             best_bounce_f = None
-            is_p1 = (cam_ys[s] > 400) if not np.isnan(cam_ys[s]) else True
+            # Determine shot direction using initial velocity vector (independent of camera net Y calibration)
+            f_check = min(num_frames - 1, s + 6)
+            dy_init = smooth_ys[f_check] - smooth_ys[s]
+            moving_to_near = (dy_init > 0)
 
-            # Scan for true ground inflection
-            for f in range(w_start, w_end):
-                if f + 1 < num_frames and not np.isnan(cam_ys[f]) and not np.isnan(cam_ys[f-1]) and not np.isnan(cam_ys[f+1]):
-                    # Reject airborne points high in the sky (Y < 240px is far above court surface)
-                    if cam_ys[f] < 240:
-                        continue
-
-                    # Reject if right at player's racket strike
-                    if not is_final and (next_s - f <= 3):
-                        continue
-
-                    if is_p1:
-                        # Ball moving away towards far court (reaches minimum height before rising)
-                        if cam_ys[f] <= cam_ys[f-1] and cam_ys[f] <= cam_ys[f+1]:
+            if not moving_to_near:
+                # Ball moving away towards far court (reaches minimum Y on court before rising)
+                for f in range(w_start, w_end + 1):
+                    if smooth_ys[f] < court_min_y:
+                        continue  # Reject airborne balls high in the sky
+                    if not is_final and (next_s - f <= 2):
+                        continue  # Reject racket contact at next stroke
+                    if 0 < f < num_frames - 1:
+                        if smooth_ys[f] <= smooth_ys[f - 1] and smooth_ys[f] <= smooth_ys[f + 1]:
                             best_bounce_f = f
                             break
-                    else:
-                        # Ball moving towards near court (reaches maximum Y on ground before rebounding up)
-                        if cam_ys[f] >= cam_ys[f-1] and cam_ys[f] >= cam_ys[f+1]:
+                if best_bounce_f is None and is_final:
+                    valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
+                    if valid_fs:
+                        best_bounce_f = valid_fs[int(np.argmin([smooth_ys[f] for f in valid_fs]))]
+            else:
+                # Ball moving towards near court (reaches maximum Y on ground before rebounding up)
+                for f in range(w_start, w_end + 1):
+                    if smooth_ys[f] < court_min_y:
+                        continue
+                    if not is_final and (next_s - f <= 2):
+                        continue
+                    if 0 < f < num_frames - 1:
+                        if smooth_ys[f] >= smooth_ys[f - 1] and smooth_ys[f] >= smooth_ys[f + 1]:
                             best_bounce_f = f
                             break
+                if best_bounce_f is None and is_final:
+                    valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
+                    if valid_fs:
+                        best_bounce_f = valid_fs[int(np.argmax([smooth_ys[f] for f in valid_fs]))]
 
             if best_bounce_f is None:
                 if is_final:
-                    seg_candidates = [f for f in range(w_start, w_end + 1) if not np.isnan(cam_ys[f]) and cam_ys[f] >= 240]
-                    if seg_candidates:
-                        min_idx = int(np.argmin([cam_ys[f] for f in seg_candidates])) if is_p1 else int(np.argmax([cam_ys[f] for f in seg_candidates]))
-                        best_bounce_f = seg_candidates[min_idx]
-                    else:
-                        best_bounce_f = min(num_frames - 1, s + 11)
+                    best_bounce_f = min(num_frames - 1, s + 11)
                 else:
-                    # Intermediate rally shot without ground contact (e.g. volley or smash in mid-air): skip
                     continue
+
+            # Physical ground touchdown occurs at the first deceleration frame (1 frame before apex)
+            contact_f = max(s + 3, best_bounce_f - 1) if (best_bounce_f - s > 4) else best_bounce_f
 
             bcx = cam_xs[best_bounce_f]
             bcy = cam_ys[best_bounce_f]
@@ -111,7 +135,8 @@ class RefereeSystem:
             bounces.append({
                 'shot_idx': idx,
                 'is_final': is_final,
-                'frame': best_bounce_f,
+                'frame': contact_f,
+                'peak_frame': best_bounce_f,
                 'camera_pos': (bcx, bcy),
                 'mini_pos': (mini_x, mini_y),
                 'is_in': is_in,
@@ -290,7 +315,7 @@ class RefereeSystem:
             for bounce in self.all_bounces:
                 b_frame = bounce['frame']
                 age = f_idx - b_frame
-                if 0 <= age <= 18:
+                if 0 <= age <= 22:
                     bc_x, bc_y = int(bounce['camera_pos'][0]), int(bounce['camera_pos'][1])
                     b_is_in = bounce.get('is_in', True)
                     b_color = (30, 230, 60) if b_is_in else (30, 30, 230)
@@ -418,46 +443,82 @@ class RefereeSystem:
                 court_patch = np.zeros((iz_h, iz_w, 3), dtype=np.uint8)
                 court_patch[:] = (130, 70, 25) # Tennis Navy Blue
 
-                # Draw Singles Sideline (Vertical line)
-                line_x = 70
-                court_patch[:, :line_x] = (100, 52, 18) # Out of bounds region
-
-                # Subtle grid
-                for gy in range(0, iz_h, 32):
-                    cv2.line(court_patch, (0, gy), (iz_w, gy), (115, 62, 22), 1)
-
                 # Inset header bar
                 cv2.rectangle(court_patch, (0, 0), (iz_w, 24), (20, 20, 28), -1)
-                cv2.putText(court_patch, "HAWK-EYE IMPACT ZOOM", (16, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (220, 220, 220), 1)
 
-                cv2.putText(court_patch, "OUT", (18, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 150, 220), 1)
-                cv2.putText(court_patch, "IN COURT", (line_x + 20, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 230, 140), 1)
+                is_close_call = abs(margin_cm) <= 35.0
+                if is_close_call:
+                    cv2.putText(court_patch, "HAWK-EYE IMPACT ZOOM", (16, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (220, 220, 220), 1)
+                    line_x = 70
+                    court_patch[:, :line_x] = (100, 52, 18) # Out of bounds region
+                    for gy in range(0, iz_h, 32):
+                        cv2.line(court_patch, (0, gy), (iz_w, gy), (115, 62, 22), 1)
+                    cv2.putText(court_patch, "OUT", (18, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 150, 220), 1)
+                    cv2.putText(court_patch, "IN COURT", (line_x + 20, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 230, 140), 1)
 
-                # White Chalk Sideline
-                cv2.line(court_patch, (line_x, 0), (line_x, iz_h), (250, 250, 250), 10)
-                cv2.putText(court_patch, "SIDELINE", (line_x - 55, iz_h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (240, 240, 240), 1)
+                    # White chalk sideline
+                    cv2.line(court_patch, (line_x, 0), (line_x, iz_h), (250, 250, 250), 10)
+                    cv2.putText(court_patch, "SIDELINE", (line_x - 55, iz_h - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (240, 240, 240), 1)
 
-                # Ball Impact Compression Footprint inside the court
-                ball_impact_x = line_x + 65
-                ball_impact_y = 135
+                    # Dynamic ball impact position proportional to margin
+                    ball_impact_x = int(line_x + 5 + np.clip(abs(margin_cm) * 2.2, 0, 95) + 16)
+                    ball_impact_y = 135
 
-                # Tennis Ball Compression Ellipse (Glow + Solid)
-                cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (30, 22), 0, 0, 360, (0, 180, 100), -1)
-                cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (26, 18), 0, 0, 360, (20, 240, 245), -1)
-                cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (28, 20), 0, 0, 360, (255, 255, 255), 2)
+                    cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (26, 18), 0, 0, 360, (0, 180, 100) if not is_out else (40, 40, 220), -1)
+                    cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (22, 14), 0, 0, 360, (20, 240, 245) if not is_out else (80, 80, 255), -1)
+                    cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (24, 16), 0, 0, 360, (255, 255, 255), 2)
 
-                # Caliper Dimension Ruler between line edge and ball
-                meas_left = line_x + 5
-                meas_right = ball_impact_x - 18
-                meas_y = ball_impact_y
-                cv2.line(court_patch, (meas_left, meas_y), (meas_right, meas_y), theme_color, 2)
-                cv2.line(court_patch, (meas_left, meas_y - 10), (meas_left, meas_y + 10), theme_color, 2)
-                cv2.line(court_patch, (meas_right, meas_y - 10), (meas_right, meas_y + 10), theme_color, 2)
+                    meas_left = line_x + 5
+                    meas_right = ball_impact_x - 16
+                    meas_y = ball_impact_y
+                    if meas_right > meas_left:
+                        cv2.line(court_patch, (meas_left, meas_y), (meas_right, meas_y), theme_color, 2)
+                        cv2.line(court_patch, (meas_left, meas_y - 8), (meas_left, meas_y + 8), theme_color, 2)
+                        cv2.line(court_patch, (meas_right, meas_y - 8), (meas_right, meas_y + 8), theme_color, 2)
 
-                badge_lbl = f"+{abs(margin_cm):.1f} cm"
-                cv2.rectangle(court_patch, (line_x + 10, meas_y + 16), (line_x + 115, meas_y + 40), (20, 20, 20), -1)
-                cv2.rectangle(court_patch, (line_x + 10, meas_y + 16), (line_x + 115, meas_y + 40), theme_color, 1)
-                cv2.putText(court_patch, badge_lbl, (line_x + 16, meas_y + 33), cv2.FONT_HERSHEY_DUPLEX, 0.44, theme_color, 1)
+                    badge_lbl = f"{margin_cm:+.1f} cm"
+                    cv2.rectangle(court_patch, (line_x + 10, meas_y + 16), (line_x + 115, meas_y + 40), (20, 20, 20), -1)
+                    cv2.rectangle(court_patch, (line_x + 10, meas_y + 16), (line_x + 115, meas_y + 40), theme_color, 1)
+                    cv2.putText(court_patch, badge_lbl, (line_x + 16, meas_y + 33), cv2.FONT_HERSHEY_DUPLEX, 0.44, theme_color, 1)
+                else:
+                    # Clear Winner / Deep Landing Zone (Wide Court Overview)
+                    cv2.putText(court_patch, "HAWK-EYE IMPACT LOCATOR", (14, 17), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 220, 220), 1)
+                    line_x = 35
+                    court_patch[:, :line_x] = (100, 52, 18) # Out of bounds
+                    for gy in range(0, iz_h, 28):
+                        cv2.line(court_patch, (0, gy), (iz_w, gy), (115, 62, 22), 1)
+
+                    # White chalk sideline
+                    cv2.line(court_patch, (line_x, 0), (line_x, iz_h), (250, 250, 250), 6)
+                    cv2.putText(court_patch, "SIDELINE", (line_x + 8, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+
+                    # Center service line marker on right
+                    cv2.line(court_patch, (iz_w - 30, 0), (iz_w - 30, iz_h), (220, 220, 220), 2)
+                    cv2.putText(court_patch, "CENTER", (iz_w - 65, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
+
+                    # Proportional ball placement across singles court
+                    ratio = min(0.75, max(0.18, abs(margin_cm) / 411.5))
+                    ball_impact_x = int(line_x + ratio * (iz_w - 65))
+                    ball_impact_y = 120
+
+                    # Ball footprint
+                    cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (22, 16), 0, 0, 360, (0, 180, 100) if not is_out else (40, 40, 220), -1)
+                    cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (18, 12), 0, 0, 360, (20, 240, 245) if not is_out else (80, 80, 255), -1)
+                    cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (20, 14), 0, 0, 360, (255, 255, 255), 2)
+
+                    # Caliper dimension ruler spanning across court
+                    cv2.line(court_patch, (line_x + 3, ball_impact_y), (ball_impact_x - 14, ball_impact_y), theme_color, 2)
+                    cv2.line(court_patch, (line_x + 3, ball_impact_y - 8), (line_x + 3, ball_impact_y + 8), theme_color, 2)
+                    cv2.line(court_patch, (ball_impact_x - 14, ball_impact_y - 8), (ball_impact_x - 14, ball_impact_y + 8), theme_color, 2)
+
+                    # Clear Winner Badge
+                    badge_lbl = f"+{abs(margin_cm):.1f} cm ({abs(margin_cm)/100:.2f} m)"
+                    cv2.rectangle(court_patch, (line_x + 10, 155), (iz_w - 20, 188), (18, 24, 38), -1)
+                    cv2.rectangle(court_patch, (line_x + 10, 155), (iz_w - 20, 188), theme_color, 1)
+                    cv2.putText(court_patch, badge_lbl, (line_x + 18, 177), cv2.FONT_HERSHEY_DUPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
+
+                    verdict_sub = "CLEAR WINNER (IN)" if not is_out else "OUT OF BOUNDS"
+                    cv2.putText(court_patch, verdict_sub, (line_x + 14, 212), cv2.FONT_HERSHEY_DUPLEX, 0.40, theme_color, 1, cv2.LINE_AA)
 
                 # Inset border
                 cv2.rectangle(court_patch, (0, 0), (iz_w - 1, iz_h - 1), (180, 180, 180), 1)

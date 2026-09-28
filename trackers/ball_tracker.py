@@ -181,6 +181,66 @@ class BallTracker:
             else:
                 filtered_shots.append(s)
 
+        # Multi-pass shot recovery:
+        # Detect intermediate volleys, overhead smashes, or decisive unclosed winning returns
+        # where the ball was struck out of the air or had < 25 frames of sustained delta_y sign.
+        dt = 3
+        added = True
+        while added:
+            added = False
+            candidates = []
+            for i in range(20, len(df_ball_positions) - 8):
+                if any(abs(i - s) < 22 for s in filtered_shots):
+                    continue
+                bx, by = df_ball_positions['mid_x'].iloc[i], df_ball_positions['mid_y'].iloc[i]
+                if np.isnan(bx) or np.isnan(by):
+                    continue
+
+                min_dist = float('inf')
+                if player_positions is not None:
+                    for cf in range(max(0, i - 4), min(len(player_positions), i + 5)):
+                        p_dict = player_positions[cf]
+                        for pid, pb in p_dict.items():
+                            if len(pb) == 4:
+                                d = np.hypot(bx - (pb[0] + pb[2]) / 2.0, by - (pb[1] + pb[3]) / 2.0)
+                                if d < min_dist:
+                                    min_dist = d
+                if min_dist > 150.0:
+                    continue
+
+                vx_pre = (df_ball_positions['mid_x'].iloc[i] - df_ball_positions['mid_x'].iloc[i - dt]) / float(dt)
+                vy_pre = (df_ball_positions['mid_y'].iloc[i] - df_ball_positions['mid_y'].iloc[i - dt]) / float(dt)
+                vx_post = (df_ball_positions['mid_x'].iloc[min(len(df_ball_positions) - 1, i + dt)] - df_ball_positions['mid_x'].iloc[i]) / float(dt)
+                vy_post = (df_ball_positions['mid_y'].iloc[min(len(df_ball_positions) - 1, i + dt)] - df_ball_positions['mid_y'].iloc[i]) / float(dt)
+
+                impulse = np.hypot(vx_post - vx_pre, vy_post - vy_pre)
+                ang_pre = np.arctan2(vy_pre, vx_pre)
+                ang_post = np.arctan2(vy_post, vx_post)
+                dang = abs((ang_post - ang_pre + np.pi) % (2 * np.pi) - np.pi)
+
+                is_hit = False
+                if impulse >= 15.0 and dang >= np.radians(35.0):
+                    is_hit = True
+                elif impulse >= 22.0:
+                    is_hit = True
+                elif abs(vy_post - vy_pre) >= 12.0 and min_dist < 120.0:
+                    is_hit = True
+
+                if is_hit:
+                    disp = np.hypot(
+                        df_ball_positions['mid_x'].iloc[min(len(df_ball_positions) - 1, i + 6)] - bx,
+                        df_ball_positions['mid_y'].iloc[min(len(df_ball_positions) - 1, i + 6)] - by
+                    )
+                    if disp > 40.0:
+                        candidates.append((impulse, i))
+
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                best_f = candidates[0][1]
+                filtered_shots.append(best_f)
+                filtered_shots.sort()
+                added = True
+
         return filtered_shots
 
     def detect_frames(self, frames, read_from_stub=False, stub_path=None):
