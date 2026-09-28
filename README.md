@@ -11,14 +11,13 @@ Hệ thống trích xuất và hiển thị kết quả phân tích theo chuẩn
 | 🎾 Clip 1: Nadal vs Verdasco (Tốc độ cao & Hawk-Eye OUT) | 🎾 Clip 2: Zverev vs Murray (Đôi công cuối sân & Phán quyết IN) |
 | :---: | :---: |
 | ![Clip 1 Demo](docs/assets/clip_01_demo.gif) | ![Clip 2 Demo](docs/assets/clip_02_demo.gif) |
-| 🎥 **[Phát Video Full HD Clip 1 (MP4)](output_videos/clip_01_nadal_vs_verdasco_fast_analysis.mp4)** | 🎥 **[Phát Video Full HD Clip 2 (MP4)](output_videos/clip_02_zverev_vs_murray_analysis.mp4)** |
+| 🎥 **[Phát Video Full HD Clip 1 (MP4)](docs/assets/clip_01_demo.mp4)** | 🎥 **[Phát Video Full HD Clip 2 (MP4)](docs/assets/clip_02_demo.mp4)** |
 | *Pha bóng tốc độ cao 153 km/h, bóng nảy OUT -118cm, Mini-Court 2D Radar, bảng thống kê tích lũy.* | *Pha đôi công giằng co cuối sân, bóng nảy IN +128cm, hiệu ứng sóng xung kích radar, đo cự ly Caliper.* |
 
 > [!TIP]
-> **Cách xem video trực tiếp**:
-> - **Ảnh động tự phát**: 2 clip trên là ảnh động preview được trích xuất trực tiếp từ kết quả phân tích AI và tự động lặp trên trình duyệt.
-> - **Video MP4 sắc nét**: Bấm vào liên kết `[Phát Video Full HD Clip X (MP4)]` bên dưới để mở file video MP4 gốc với đầy đủ âm thanh, hình ảnh 1080p và 24fps.
-> - **Nhúng video trên GitHub**: Bạn cũng có thể nhúng thẻ `<video src="output_videos/clip_01_nadal_vs_verdasco_fast_analysis.mp4" controls width="100%"></video>` hoặc kéo thả file MP4 vào ô chỉnh sửa của GitHub để GitHub tự sinh trình phát video trực tiếp!
+> **Cách xem video trên GitHub**:
+> - **Ảnh động tự phát**: 2 clip trên là ảnh động GIF preview tự động lặp trên trình duyệt, có thể xem được ngay lập tức.
+> - **Xem video Full HD trực tiếp**: Bấm vào liên kết `[Phát Video Full HD Clip X (MP4)]` bên trên để mở và xem video MP4 trực tiếp trên trình phát video của GitHub!
 
 ---
 
