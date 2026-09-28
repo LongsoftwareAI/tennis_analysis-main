@@ -41,38 +41,50 @@ class RefereeSystem:
         px_to_cm = (constants.DOUBLE_LINE_WIDTH / max(1.0, float(mini_court.get_width_of_mini_court()))) * 100.0
 
         for idx, s in enumerate(ball_shot_frames):
-            next_s = ball_shot_frames[idx + 1] if idx + 1 < len(ball_shot_frames) else num_frames - 1
-            w_start = min(num_frames - 1, s + 6)
-            w_end = min(num_frames - 1, min(next_s - 1, s + 22))
+            is_final = (idx == len(ball_shot_frames) - 1)
+            next_s = ball_shot_frames[idx + 1] if not is_final else num_frames - 1
+            w_start = min(num_frames - 1, s + 5)
+            w_end = min(num_frames - 1, min(next_s - 1, s + 22)) if not is_final else min(num_frames - 1, s + 24)
             if w_end <= w_start:
                 continue
 
             # Look for local inflection / bounce point where ball touches court
-            # In clip_01, shot at 351 bounces at 362: dy drops to local minimum 322.1 then climbs
             best_bounce_f = None
             is_p1 = (cam_ys[s] > 400) if not np.isnan(cam_ys[s]) else True
 
-            # Scan for local inflection
+            # Scan for true ground inflection
             for f in range(w_start, w_end):
                 if f + 1 < num_frames and not np.isnan(cam_ys[f]) and not np.isnan(cam_ys[f-1]) and not np.isnan(cam_ys[f+1]):
+                    # Reject airborne points high in the sky (Y < 240px is far above court surface)
+                    if cam_ys[f] < 240:
+                        continue
+
+                    # Reject if right at player's racket strike
+                    if not is_final and (next_s - f <= 3):
+                        continue
+
                     if is_p1:
-                        # Ball moving away towards far court (cam_y decreases, reaches minimum at bounce)
+                        # Ball moving away towards far court (reaches minimum height before rising)
                         if cam_ys[f] <= cam_ys[f-1] and cam_ys[f] <= cam_ys[f+1]:
                             best_bounce_f = f
                             break
                     else:
-                        # Ball moving towards near court (cam_y increases, reaches maximum at bounce)
+                        # Ball moving towards near court (reaches maximum Y on ground before rebounding up)
                         if cam_ys[f] >= cam_ys[f-1] and cam_ys[f] >= cam_ys[f+1]:
                             best_bounce_f = f
                             break
 
             if best_bounce_f is None:
-                seg_ys = [cam_ys[f] for f in range(w_start, w_end + 1) if not np.isnan(cam_ys[f])]
-                if seg_ys:
-                    min_idx = int(np.argmin(seg_ys)) if is_p1 else int(np.argmax(seg_ys))
-                    best_bounce_f = w_start + min_idx
+                if is_final:
+                    seg_candidates = [f for f in range(w_start, w_end + 1) if not np.isnan(cam_ys[f]) and cam_ys[f] >= 240]
+                    if seg_candidates:
+                        min_idx = int(np.argmin([cam_ys[f] for f in seg_candidates])) if is_p1 else int(np.argmax([cam_ys[f] for f in seg_candidates]))
+                        best_bounce_f = seg_candidates[min_idx]
+                    else:
+                        best_bounce_f = min(num_frames - 1, s + 11)
                 else:
-                    best_bounce_f = min(num_frames - 1, s + 11)
+                    # Intermediate rally shot without ground contact (e.g. volley or smash in mid-air): skip
+                    continue
 
             bcx = cam_xs[best_bounce_f]
             bcy = cam_ys[best_bounce_f]
@@ -98,7 +110,7 @@ class RefereeSystem:
 
             bounces.append({
                 'shot_idx': idx,
-                'is_final': (idx == len(ball_shot_frames) - 1),
+                'is_final': is_final,
                 'frame': best_bounce_f,
                 'camera_pos': (bcx, bcy),
                 'mini_pos': (mini_x, mini_y),
@@ -302,16 +314,12 @@ class RefereeSystem:
                     cv2.ellipse(frame, (bc_x, bc_y), (r1, int(r1 * 0.38)), 0, 0, 360, (255, 255, 255), 2, cv2.LINE_AA)
                     cv2.ellipse(frame, (bc_x, bc_y), (r2, int(r2 * 0.38)), 0, 0, 360, b_glow, 1, cv2.LINE_AA)
 
-                    # 3. Ground contact pin & floating badge
-                    if bounce.get('is_final', False) or age <= 12:
+                    # 3. Ground contact pin & floating badge - ONLY for the decisive point-ending landing!
+                    if bounce.get('is_final', False):
                         pin_top = bc_y - 36
                         cv2.line(frame, (bc_x, bc_y - 4), (bc_x, pin_top + 14), (255, 255, 255), 1, cv2.LINE_AA)
 
-                        if bounce.get('is_final', False):
-                            badge_txt = f"BOUNCE 1: IN (+{abs(bounce.get('margin_side_cm', 128)):.0f}cm)" if b_is_in else "OUT"
-                        else:
-                            badge_txt = "BOUNCE: IN"
-
+                        badge_txt = f"BOUNCE 1: IN (+{abs(bounce.get('margin_side_cm', 128)):.0f}cm)" if b_is_in else "OUT"
                         (bw, bh), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
                         bx1 = bc_x - int(bw / 2) - 8
                         bx2 = bc_x + int(bw / 2) + 8

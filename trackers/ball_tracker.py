@@ -128,6 +128,29 @@ class BallTracker:
             positive_position_change = df_ball_positions['delta_y'].iloc[i] < 0 and df_ball_positions['delta_y'].iloc[i + 1] > 0
 
             if negative_position_change or positive_position_change:
+                bx = df_ball_positions['mid_x'].iloc[i]
+                by = df_ball_positions['mid_y'].iloc[i]
+
+                # 1. Height filter: reject airborne turning points in the sky (e.g. lob apex at Y < 120px)
+                if not np.isnan(by) and by < 120.0:
+                    continue
+
+                # 2. Player proximity check: a true shot must occur within reach of a player's racket
+                if player_positions is not None and not np.isnan(bx) and not np.isnan(by):
+                    min_p_dist = float('inf')
+                    for check_f in range(max(0, i - 4), min(len(player_positions), i + 5)):
+                        p_dict = player_positions[check_f]
+                        for p_id in (1, 2):
+                            if p_id in p_dict and len(p_dict[p_id]) == 4:
+                                p_bbox = p_dict[p_id]
+                                p_center = ((p_bbox[0] + p_bbox[2]) / 2.0, (p_bbox[1] + p_bbox[3]) / 2.0)
+                                dist = np.hypot(bx - p_center[0], by - p_center[1])
+                                if dist < min_p_dist:
+                                    min_p_dist = dist
+                    # If ball is far away from both players, it is an airborne apex or flight turning point, not a shot
+                    if min_p_dist > 250.0:
+                        continue
+
                 change_count = 0
                 max_check = min(len(df_ball_positions), i + int(minimum_change_frames_for_hit * 1.2) + 1)
                 for change_frame in range(i + 1, max_check):
