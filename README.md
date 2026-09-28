@@ -14,9 +14,10 @@ Hệ thống phân tích video trận đấu Tennis tự động, ứng dụng t
    - [Phương pháp 5: Chiếu Homography lên sân Radar 2D (MiniCourt Projection)](#phương-pháp-5-chiếu-homography-lên-sân-radar-2d-minicourt-projection)
    - [Phương pháp 6: Tính toán chỉ số vật lý & Tốc độ thi đấu (Match Analytics)](#phương-pháp-6-tính-toán-chỉ-số-vật-lý--tốc-độ-thi-đấu-match-analytics)
    - [Phương pháp 7: Trợ lý Trọng tài Hawk-Eye ELC & Phán quyết Ăn điểm (Referee & Point Decision)](#phương-pháp-7-trợ-lý-trọng-tài-hawk-eye-elc--phán-quyết-ăn-điểm-referee--point-decision)
-3. [Hướng dẫn sử dụng nhanh (Quick Start)](#-hướng-dẫn-sử-dụng-nhanh-quick-start)
-4. [Tập dữ liệu & Huấn luyện mô hình (Training & Datasets)](#-tập-dữ-liệu--huấn-luyện-mô-hình-training--datasets)
-5. [Cấu trúc mã nguồn dự án](#-cấu-trúc-mã-nguồn-dự-án)
+3. [Tải về Dữ liệu & Trọng số mô hình (Downloads: Datasets & Weights)](#-tải-về-dữ-liệu--trọng-số-mô-hình-downloads-datasets--weights)
+4. [Hướng dẫn sử dụng nhanh (Quick Start)](#-hướng-dẫn-sử-dụng-nhanh-quick-start)
+5. [Tập dữ liệu & Huấn luyện mô hình (Training & Datasets)](#-tập-dữ-liệu--huấn-luyện-mô-hình-training--datasets)
+6. [Cấu trúc mã nguồn dự án](#-cấu-trúc-mã-nguồn-dự-án)
 
 ---
 
@@ -165,6 +166,20 @@ Hệ thống đóng vai trò như một tổ VAR / Hawk-Eye Electronic Line Call
 
 ---
 
+## 📥 Tải về Dữ liệu & Trọng số mô hình (Downloads: Datasets & Weights)
+
+Để thuận tiện cho việc chạy thử nghiệm ngay lập tức hoặc huấn luyện lại các mô hình AI từ đầu, toàn bộ file trọng số mô hình (**Model Weights**) và tập dữ liệu (**Datasets**) đã được lưu trữ sẵn trên Google Drive:
+
+| Thành phần | Liên kết tải về (Google Drive) | Thư mục đích sau khi tải | Mô tả chi tiết |
+| :--- | :--- | :--- | :--- |
+| **Model Weights (Trọng số đã train)** | [👉 **Tải Model Weights tại đây**](https://drive.google.com/drive/folders/1hjxjTtbpErMXYAl-4z5uH8cUV29_EchO) | Đặt vào thư mục `models/` | Chứa các model đã huấn luyện hoàn chỉnh: `yolo26s.pt`, `ball_detector_yolo26_best.pt`, `keypoints_model.keras` |
+| **Training Datasets (Tập dữ liệu)** | [👉 **Tải Datasets tại đây**](https://drive.google.com/drive/folders/175Zhdm-b0HVc7F_x_Towv1SJtRBqv_GD?usp=sharing) | Đặt vào thư mục `datasets/` | Tập dữ liệu ảnh gán nhãn bóng tennis (YOLO format) & 14 điểm mốc vạch sân phục vụ huấn luyện |
+
+> [!TIP]
+> **Khởi chạy nhanh dự án**: Nếu bạn chỉ muốn chạy phân tích các clip video có sẵn hoặc video của riêng bạn, bạn chỉ cần tải thư mục **Model Weights** và đặt các file vào thư mục `models/` của dự án là có thể chạy ngay lập tức mà không cần tải dataset!
+
+---
+
 ## 🚀 Hướng dẫn sử dụng nhanh (Quick Start)
 
 ### 1. Cài đặt môi trường
@@ -244,6 +259,8 @@ python cut_video_clips.py --start_min 1 --start_sec 25 --end_min 1 --end_sec 45 
 ## 🏋️ Tập dữ liệu & Huấn luyện mô hình (Training & Datasets)
 
 Hệ thống hỗ trợ huấn luyện lại các mô hình thành phần:
+- **Tải Dataset đầy đủ**: [👉 Google Drive Datasets](https://drive.google.com/drive/folders/175Zhdm-b0HVc7F_x_Towv1SJtRBqv_GD?usp=sharing)
+- **Tải Model Weights đã train**: [👉 Google Drive Model Weights](https://drive.google.com/drive/folders/1hjxjTtbpErMXYAl-4z5uH8cUV29_EchO)
 - Xem chi tiết tổ chức dataset tại: [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
 - **Huấn luyện mô hình phát hiện bóng (YOLO26)**:
   ```powershell
