@@ -20,7 +20,6 @@ import constants
 from trackers import PlayerTracker, BallTracker
 from court_line_detector import (
     CourtLineDetector,
-    detect_court_keypoints_dynamically,
     track_court_keypoints_cpv
 )
 from mini_court import MiniCourt
@@ -33,10 +32,8 @@ def main():
                         help="Override input video path specified in config.yaml")
     parser.add_argument("--output", "-o", type=str, default=None,
                         help="Override output video path or filename")
-    parser.add_argument("--court_mode", "-m", type=str, default=None, choices=["cpv", "dynamic", "static"],
-                        help="Override court tracking mode: 'cpv' (Hybrid AI+Pure CPV), 'dynamic', or 'static'")
-    parser.add_argument("--static_court", action="store_true",
-                        help="Shortcut for --court_mode static")
+    parser.add_argument("--court_mode", "-m", type=str, default="cpv",
+                        help="Court tracking mode: 'cpv' (Pure CPV Optical Flow Tracking)")
     parser.add_argument("--read_stub", action="store_true", default=None,
                         help="Force reading detections from stub cache")
     parser.add_argument("--no_stub", action="store_true",
@@ -56,9 +53,6 @@ def main():
     if args.court_mode is not None:
         cfg["tracking"]["court_mode"] = args.court_mode
         overrides["court_mode"] = args.court_mode
-    elif args.static_court:
-        cfg["tracking"]["court_mode"] = "static"
-        overrides["court_mode"] = "static"
     if args.no_stub:
         cfg["tracking"]["force_live"] = True
         cfg["tracking"]["use_stubs"] = False
@@ -151,27 +145,13 @@ def main():
     )
     ball_detections = ball_tracker.interpolate_ball_positions(ball_detections)
 
-    # 6. Court Keypoint Extraction
-    mode = cfg["tracking"].get("court_mode", "cpv")
-    if mode == "static":
-        print("[CourtLineDetector] Mode: Static Single-Frame (Frame 0)")
-        court_keypoints = court_line_detector.predict(video_frames[0])
-    elif mode == "dynamic":
-        print("[CourtLineDetector] Mode: Dynamic AI Per-Frame (Cách 2)")
-        court_keypoints = detect_court_keypoints_dynamically(
-            court_line_detector,
-            video_frames,
-            sample_interval=2,
-            smooth_window=5,
-            stub_path=court_stub if use_stub else None
-        )
-    else:  # mode == "cpv"
-        print("[CourtLineDetector] Mode: Hybrid AI Init + Pure CPV Optical Flow Tracking (Cách 3 - Chuẩn công nghiệp)")
-        court_keypoints = track_court_keypoints_cpv(
-            video_frames,
-            detector=court_line_detector,
-            stub_path=court_stub if use_stub else None
-        )
+    # 6. Court Keypoint Extraction (Pure CPV Optical Flow Court Tracking)
+    print("[CourtLineDetector] Pure CPV Optical Flow Court Tracking (ResNet50 Init + Lucas-Kanade + RANSAC)...")
+    court_keypoints = track_court_keypoints_cpv(
+        video_frames,
+        detector=court_line_detector,
+        stub_path=court_stub if use_stub else None
+    )
 
     # 7. Choose Players & Interpolate
     match_mode = cfg.get("tracking", {}).get("match_mode", "auto")

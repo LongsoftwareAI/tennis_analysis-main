@@ -1,3 +1,2 @@
 from .court_line_detector import CourtLineDetector
-from .dynamic_court_detector import detect_court_keypoints_dynamically
 from .cpv_court_tracker import track_court_keypoints_cpv
