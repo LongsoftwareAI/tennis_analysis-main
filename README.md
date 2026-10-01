@@ -380,7 +380,7 @@ python cut_video_clips.py --start_min 1 --start_sec 25 --end_min 1 --end_sec 45 
 Hệ thống hỗ trợ huấn luyện lại các mô hình thành phần:
 - **Tải Dataset đầy đủ**: [👉 Google Drive Datasets](https://drive.google.com/drive/folders/175Zhdm-b0HVc7F_x_Towv1SJtRBqv_GD?usp=sharing)
 - **Tải Model Weights đã train**: [👉 Google Drive Model Weights](https://drive.google.com/drive/folders/1hjxjTtbpErMXYAl-4z5uH8cUV29_EchO)
-- Xem chi tiết tổ chức dataset tại: [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md).
+- Xem chi tiết tổ chức dataset tại: [`DATASET_STRUCTURE.md`](DATASET_STRUCTURE.md) và tài liệu chi tiết quy trình tiền xử lý tại: [`DATA_PREPROCESSING.md`](DATA_PREPROCESSING.md).
 - **Huấn luyện mô hình phát hiện bóng (YOLO26)**:
   ```powershell
   python training/train_yolo26_ball_detector.py --dataset merged --epochs 50 --batch 8
