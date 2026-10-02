@@ -23,7 +23,7 @@ def iter_video_frames(video_path):
     finally:
         cap.release()
 
-def save_video(output_video_frames, output_video_path):
+def save_video(output_video_frames, output_video_path, fps=24.0):
     # Check if target file is locked by an external media player
     final_path = output_video_path
     if os.path.exists(output_video_path):
@@ -48,7 +48,7 @@ def save_video(output_video_frames, output_video_path):
     frames = iter(output_video_frames)
     first_frame = next(frames)
     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    out = cv2.VideoWriter(final_path, fourcc, 24, (first_frame.shape[1], first_frame.shape[0]))
+    out = cv2.VideoWriter(final_path, fourcc, fps, (first_frame.shape[1], first_frame.shape[0]))
     try:
         out.write(first_frame)
         for frame in frames:

@@ -71,3 +71,5 @@ scratch/
 test_*.py
 *_test.py
 *datasets/
+*input_videos/
+*output_videos/

@@ -82,10 +82,14 @@ def main():
         return
         
     cap = cv2.VideoCapture(input_video_path)
+    video_fps = cap.get(cv2.CAP_PROP_FPS)
     has_frame, first_frame = cap.read()
     cap.release()
     if not has_frame:
         raise ValueError(f"Could not read frames from '{input_video_path}'")
+    if not np.isfinite(video_fps) or video_fps <= 0:
+        video_fps = 24.0
+        print("[Warning] Could not determine input FPS; falling back to 24 FPS")
 
     # 3. Determine Stubs and Caching
     video_stem = os.path.splitext(os.path.basename(input_video_path))[0]
@@ -201,8 +205,8 @@ def main():
     for ball_shot_ind in range(len(shot_frames_extended) - 1):
         start_frame = shot_frames_extended[ball_shot_ind]
         end_frame = shot_frames_extended[ball_shot_ind + 1]
-        flight_duration_frames = min(24, max(1, end_frame - start_frame))
-        ball_shot_time_in_seconds = flight_duration_frames / 24.0  # 24 fps
+        flight_duration_frames = min(video_fps, max(1, end_frame - start_frame))
+        ball_shot_time_in_seconds = flight_duration_frames / video_fps
 
         # Safely find start and end positions of ball during the shot
         ball_start_pos = None
@@ -381,7 +385,7 @@ def main():
         output_path = os.path.join(output_dir, f"{video_stem}_analysis.avi")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    saved_path = save_video(render_frames(), output_path)
+    saved_path = save_video(render_frames(), output_path, fps=video_fps)
     print(f"\n=== Successfully generated tennis analysis video at {saved_path} ===")
 
 if __name__ == "__main__":
