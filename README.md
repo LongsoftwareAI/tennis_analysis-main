@@ -47,7 +47,7 @@ Hệ thống được thiết kế theo kiến trúc phân tách độc lập (M
 | :--- | :--- | :--- |
 | **Player Tracker** | YOLO26 + Multi-Track Stitching + Net Filtering | Bám vết người chơi (Hỗ trợ Đánh đơn 2 người & Đánh đôi 4 người), loại trừ trọng tài & người nhặt bóng |
 | **Ball Tracker** | YOLO26 Custom PyTorch / TF SavedModel | Nhận diện quả bóng tennis nhỏ, mờ do chuyển động tốc độ cao kèm vệt đuôi sao băng (Comet Trail) |
-| **Court Tracker** | ResNet50 TensorFlow + Pure CPV Lucas-Kanade Optical Flow | Định vị 14 điểm mốc sân tennis, bám sát vạch kẻ khi máy quay lia/zoom |
+| **Court Tracker** | TrackNet heatmaps + Homography + Pure CPV Lucas-Kanade Optical Flow | Định vị 14 điểm mốc sân tennis, bám sát vạch kẻ khi máy quay lia/zoom |
 | **MiniCourt** | Perspective Homography Transform ($3 \times 3$) | Ánh xạ tọa độ từ video góc phối cảnh sang bản đồ 2D chuẩn quốc tế kèm phát hiện bóng ngoài sân |
 | **Referee System** | Hawk-Eye Electronic Line Calling (ELC) & Point Scoring | Tự động kiểm tra bóng IN/OUT, đo khoảng cách mép vạch (cm), phân định ai ăn điểm và vẽ thẻ trọng tài truyền hình |
 | **Match Analytics** | Physical Kinematics Modeling | Đo tốc độ cú đánh (km/h), tốc độ di chuyển tuyển thủ (km/h), đếm cú đánh |
@@ -76,7 +76,7 @@ flowchart TD
     subgraph DETECT ["👁️ 2. TRACKING ĐA NHIỆM (AI & COMPUTER VISION)"]
         PT["Player Tracker (YOLO26s)<br/>• Bám vết ByteTrack (Track IDs)<br/>• Spatial Proximity Stitching<br/>• Đánh Đơn (P1, P2) / Đánh Đôi (P1..P4)"]:::visionStyle
         BT["Ball Tracker (YOLO26 Custom)<br/>• Model 4,454 ảnh bóng tennis<br/>• Multi-Pass Shot Detection (Inflection & Impulse)<br/>• Nội suy quỹ đạo bóng liên tục"]:::visionStyle
-        CT["Court Line Tracker (Pure CPV)<br/>• Frame 0: ResNet50 hồi quy 14 keypoints<br/>• Frame 1..N: Lucas-Kanade Optical Flow<br/>• RANSAC Homography chống rung vạch"]:::visionStyle
+        CT["Court Line Tracker (Hybrid)<br/>• TrackNet heatmaps + homography<br/>• Lucas-Kanade Optical Flow hai chiều<br/>• Tái-detect khi camera dịch chuyển"]:::visionStyle
     end
 
     subgraph GEO ["📐 3. HÌNH HỌC PHẲNG & ĐỘNG HỌC (KINEMATICS)"]
@@ -160,12 +160,12 @@ Trực thuộc module [`trackers/ball_tracker.py`](trackers/ball_tracker.py):
 
 ---
 
-### Phương pháp 4: Bám vạch sân quang học (Pure CPV Optical Flow Court Tracking)
+### Phương pháp 4: TrackNet-corrected CPV Optical Flow Court Tracking
 Trực thuộc module [`court_line_detector/cpv_court_tracker.py`](court_line_detector/cpv_court_tracker.py):
-Hệ thống ứng dụng giải pháp bám vạch sân chuẩn công nghiệp **Pure CPV Optical Flow Court Tracking** kết hợp mạng nơ-ron ResNet50:
+Hệ thống dùng mạng heatmap theo phương pháp [TennisCourtDetector](https://github.com/yastrebksv/TennisCourtDetector) để khởi tạo sân, sau đó tiếp tục bằng **Pure CPV Optical Flow Court Tracking**:
 
 ```
-[Frame 0] ───────────────► ResNet50 AI Model ──────────────► Khởi tạo 14 Keypoints ban đầu
+[Frame 0] ───────────────► TrackNet 15 Heatmaps ───────────► Refine + Homography 14 Keypoints
                                                                    │
                                                                    ▼
 [Frame 1 ... N] ────────► Lucas-Kanade Optical Flow (CPV) ──► Cập nhật tọa độ theo camera
@@ -174,12 +174,13 @@ Hệ thống ứng dụng giải pháp bám vạch sân chuẩn công nghiệp *
                           RANSAC Homography Validation  ────► Kiểm tra tính cứng hình học sân
 ```
 
-- **Khởi tạo thông minh**: Tại frame 0, mạng ResNet50 (Keras) dự đoán 14 điểm mốc đặc trưng của sân.
+- **Khởi tạo thông minh**: Tại frame 0, TrackNet PyTorch suy luận 15 heatmaps ở độ phân giải `640x360`; 14 heatmaps đầu được hậu xử lý bằng Hough/refinement và homography để khôi phục các điểm bị che.
 - **Theo dõi dòng quang học đa tầng (Pyramidal Lucas-Kanade)**:
-  - Hàm `cv2.calcOpticalFlowPyrLK` theo dõi chuyển động vi mô của các điểm mốc giữa 2 frame liên tiếp: $I(x, y, t) = I(x + \delta x, y + \delta y, t + \delta t)$.
+  - Hàm `cv2.calcOpticalFlowPyrLK` theo dõi hai chiều và loại các feature có forward-backward error lớn trước khi ước lượng chuyển động camera.
   - Bám sát từng cử động lia máy (pan), nghiêng máy (tilt) hoặc phóng to/thu nhỏ (zoom) của camera truyền hình.
-- **Ràng buộc Homography qua RANSAC**: Sử dụng `cv2.findHomography` để loại bỏ các điểm mốc bị nhiễu (outliers), đảm bảo 14 điểm luôn giữ đúng tỷ lệ hình học phẳng của sân tennis, không bị méo hay xô lệch.
-- **Ưu điểm**: Khắc phục triệt để hiện tượng vạch sân bị giật (jitter) hoặc trôi (drifting) khi chạy AI từng frame, đồng thời tốc độ xử lý nhanh hơn 10 lần.
+- **Ràng buộc Homography qua RANSAC**: Sử dụng `cv2.findHomography` thay cho affine transform để mô hình hóa đầy đủ biến đổi phối cảnh khi camera di chuyển.
+- **Tự hiệu chỉnh drift**: Chạy lại TrackNet mỗi 60 frame, ngay khi camera dịch chuyển mạnh hoặc khi optical flow mất transform; sau đó tiếp tục tracking từ bộ keypoints mới.
+- **Ưu điểm**: Giảm rõ rệt hiện tượng keypoints trôi khỏi vạch khi camera pan/tilt/zoom, đồng thời tránh phải chạy model trên mọi frame tĩnh.
 
 ---
 
@@ -291,7 +292,7 @@ Hệ thống đóng vai trò như một tổ VAR / Hawk-Eye Electronic Line Call
 
 | Thành phần | Liên kết tải về (Google Drive) | Thư mục đích sau khi tải | Mô tả chi tiết |
 | :--- | :--- | :--- | :--- |
-| **Model Weights (Trọng số đã train)** | [👉 **Tải Model Weights tại đây**](https://drive.google.com/drive/folders/1hjxjTtbpErMXYAl-4z5uH8cUV29_EchO) | Đặt vào thư mục `models/` | Chứa các model đã huấn luyện hoàn chỉnh: `yolo26s.pt`, `ball_detector_yolo26_best.pt`, `keypoints_model.keras` |
+| **Model Weights (Trọng số đã train)** | [👉 **Weights của dự án**](https://drive.google.com/drive/folders/1hjxjTtbpErMXYAl-4z5uH8cUV29_EchO) và [👉 **TrackNet court weights**](https://drive.google.com/file/d/1f-Co64ehgq4uddcQm1aFBDtbnyZhQvgG/view?usp=drive_link) | Đặt vào thư mục `models/` | Các file runtime gồm `yolo26s.pt`, `ball_detector_yolo26_best.pt`, `model_tennis_court_det.pt` |
 | **Training Datasets (Tập dữ liệu)** | [👉 **Tải Datasets tại đây**](https://drive.google.com/drive/folders/175Zhdm-b0HVc7F_x_Towv1SJtRBqv_GD?usp=sharing) | Đặt vào thư mục `datasets/` | Tập dữ liệu ảnh gán nhãn bóng tennis (YOLO format) & 14 điểm mốc vạch sân phục vụ huấn luyện |
 
 > [!TIP]
@@ -323,6 +324,7 @@ video:
 tracking:
   court_mode: "cpv"  # Thuật toán bám vạch sân quang học Pure CPV (chuẩn công nghiệp)
   use_stubs: true    # Dùng cache nếu đã detect trước đó
+  ball_batch_size: 4 # Số frame bóng suy luận mỗi lượt
 
 visualization:
   draw_players: true          # Vẽ tuyển thủ
@@ -350,6 +352,16 @@ python main.py --config config.yaml
 ```
 
 Video phân tích hoàn chỉnh sẽ được lưu tại thư mục `output_videos/`.
+
+Video được đọc và xuất theo từng đoạn nhỏ để không phải giữ toàn bộ frame trong RAM. Dữ liệu nhận diện người, bóng và mốc sân được cache riêng; cache chỉ được dùng khi mới hơn video và trọng số model. Dùng `--no_stub` để nhận diện lại từ đầu.
+
+Để kiểm tra YOLO có dùng GPU NVIDIA hay không trong môi trường `dat302m`:
+
+```powershell
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+Nếu kết quả là `False`, cài bản PyTorch CUDA phù hợp với GPU và driver theo [hướng dẫn chính thức](https://pytorch.org/get-started/locally/). `ball_batch_size` có thể giảm xuống `1` khi thiếu VRAM.
 
 ### 4. Công cụ cắt video clip từ trận đấu đầy đủ (`cut_video_clips.py`)
 Khi bạn có một video trận đấu dài (Full Match) và muốn trích xuất các pha rally đẹp mắt, bạn chỉ cần dùng công cụ cắt clip cực kỳ tiện lợi:
@@ -385,10 +397,7 @@ Hệ thống hỗ trợ huấn luyện lại các mô hình thành phần:
   ```powershell
   python training/train_yolo26_ball_detector.py --dataset merged --epochs 50 --batch 8
   ```
-- **Huấn luyện mô hình vạch sân (TensorFlow ResNet50)**:
-  ```powershell
-  python training/train_court_line_detector_tf.py --epochs 50 --batch_size 16
-  ```
+- **Huấn luyện mô hình vạch sân**: runtime hiện dùng kiến trúc/weights PyTorch của [yastrebksv/TennisCourtDetector](https://github.com/yastrebksv/TennisCourtDetector/tree/e5cd4f1ce26b15361700d3d89e068cbf0e82749e). Script TensorFlow ResNet50 cũ trong `training/` chỉ được giữ làm tài liệu thử nghiệm và không tạo weights tương thích với runtime mới.
 
 ---
 
@@ -408,10 +417,12 @@ tennis_analysis-main/
 │   ├── yolo26s.pt                 # Trọng số YOLO26 phát hiện người chơi
 │   ├── ball_detector_yolo26_best.pt # Trọng số YOLO26 chuyên dụng phát hiện bóng
 │   ├── ball_detector_tf_saved_model/# Mô hình bóng dạng TensorFlow SavedModel
-│   └── keypoints_model.keras      # Mô hình ResNet50 phát hiện 14 điểm mốc sân
+│   └── model_tennis_court_det.pt  # TrackNet heatmap model phát hiện 14 điểm mốc sân
 │
 ├── court_line_detector/           # Module bám vạch sân
-│   ├── court_line_detector.py     # ResNet50 Keras Keypoint Detector (Frame 0 Init)
+│   ├── court_heatmap_model.py     # Kiến trúc TrackNet heatmap 15 channels
+│   ├── court_postprocess.py       # Hough refinement + homography reconstruction
+│   ├── court_line_detector.py     # PyTorch detector khởi tạo 14 keypoints ở frame 0
 │   └── cpv_court_tracker.py       # ⭐ Thuật toán bám vạch sân quang học Pure CPV Optical Flow
 │
 ├── trackers/                      # Module bám vết đối tượng

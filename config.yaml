@@ -17,7 +17,7 @@ video:
   #   - "input_videos/new_input/clips/clip_03_duckworth_vs_hewitt.mp4"    (Pha bóng Duckworth vs Hewitt)
   #   - "input_videos/new_input/clips/clip_04_monfils_rally.mp4"          (Pha rally của Monfils)
   #   - "input_videos/input_video.mp4"                                    (Video mẫu ban đầu)
-  input_path: "input_videos/new_input/clips/clip_01_nadal_vs_verdasco_fast.mp4"
+  input_path: "input_videos/new_input/clips/test2.mp4"
 
   # Thư mục lưu kết quả phân tích
   output_dir: "output_videos"
@@ -32,7 +32,7 @@ video:
 # ------------------------------------------------------------------------------
 tracking:
   # Chế độ bám vạch sân (Court Line Tracking Mode):
-  # Sử dụng Pure CPV Lucas-Kanade Optical Flow + RANSAC (Khởi tạo bởi AI ResNet50 tại Frame 0).
+  # Pure CPV Lucas-Kanade + RANSAC, khởi tạo bởi TrackNet heatmap ở frame 0.
   # Chuẩn công nghiệp: Bám dính từng pixel, triệt tiêu 100% rung giật và chạy cực nhanh (~150+ FPS).
   court_mode: "cpv"
 
@@ -51,6 +51,7 @@ tracking:
   use_stubs: true
   force_live: false
   stubs_dir: "tracker_stubs"
+  ball_batch_size: 4  # Số frame bóng suy luận mỗi lượt; giảm nếu GPU thiếu bộ nhớ
 
 # ------------------------------------------------------------------------------
 # 3. ĐƯỜNG DẪN CÁC MÔ HÌNH HỌC SÂU (MODELS)
@@ -62,8 +63,8 @@ models:
   # Model phát hiện bóng tennis (custom PyTorch YOLO26 chuyên dụng)
   ball_model: "models/ball_detector_yolo26_best.pt"
 
-  # Model phát hiện 14 điểm mốc vạch sân tennis (ResNet50 TensorFlow/Keras)
-  court_model: "models/keypoints_model.keras"
+  # TrackNet heatmap model phát hiện 14 điểm mốc vạch sân tennis
+  court_model: "models/model_tennis_court_det.pt"
 
 # ------------------------------------------------------------------------------
 # 4. TÙY CHỌN HIỂN THỊ TRÊN VIDEO (VISUALIZATION)

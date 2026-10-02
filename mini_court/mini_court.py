@@ -106,9 +106,12 @@ class MiniCourt:
         active_info = self.ball_decision_info if self.ball_decision_info is not None else self.ball_out_info
         return self.drawer.draw_decision_indicator(frame, active_info)
 
-    def draw_mini_court(self, frames):
+    def draw_mini_court(self, frames, start_frame=0):
         active_info = self.ball_decision_info if self.ball_decision_info is not None else self.ball_out_info
-        return self.drawer.draw_mini_court(frames, all_bounces=self.all_bounces, decision_info=active_info)
+        return self.drawer.draw_mini_court(frames, all_bounces=self.all_bounces, decision_info=active_info,
+                                           start_frame=start_frame)
 
-    def draw_points_on_mini_court(self, frames, positions, color=(0, 255, 0)):
-        return self.drawer.draw_points_on_mini_court(frames, positions, color=color)
+    def draw_points_on_mini_court(self, frames, positions, color=(0, 255, 0),
+                                  start_frame=0, ball_history=None):
+        return self.drawer.draw_points_on_mini_court(frames, positions, color=color,
+                                                     start_frame=start_frame, ball_history=ball_history)

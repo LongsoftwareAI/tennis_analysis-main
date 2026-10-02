@@ -13,6 +13,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "use_stubs": True,         # Load detection cache from stubs if available
         "force_live": False,       # Force live detection even if stubs exist
         "stubs_dir": "tracker_stubs",
+        "ball_batch_size": 4,
     },
     "models": {
         "player_model": "models/yolo26s.pt",

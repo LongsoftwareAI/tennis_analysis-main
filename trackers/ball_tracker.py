@@ -1,21 +1,22 @@
 import os
 import cv2
 import pickle
+from itertools import islice
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 
 class BallTracker:
     """
     Tennis Ball Tracker supporting pure TensorFlow (SavedModel, TFLite) 
     as well as YOLO26 models.
     """
-    def __init__(self, model_path):
+    def __init__(self, model_path, load_model=True):
         self.model_path = model_path
         self.backend = None  # 'tf_saved_model', 'tflite', or 'ultralytics'
         self.model = None
 
-        self._load_model(model_path)
+        if load_model:
+            self._load_model(model_path)
 
     def _load_model(self, model_path):
         if not model_path:
@@ -29,6 +30,8 @@ class BallTracker:
 
         # Check if model_path is a TensorFlow TFLite file
         if str(model_path).endswith('.tflite') and os.path.exists(model_path):
+            import tensorflow as tf
+            self.tf = tf
             self.backend = 'tflite'
             self.interpreter = tf.lite.Interpreter(model_path=model_path)
             self.interpreter.allocate_tensors()
@@ -41,6 +44,8 @@ class BallTracker:
             os.path.exists(os.path.join(model_path, "saved_model.pb")) or 
             os.path.exists(os.path.join(model_path, "fingerprint.pb"))
         ):
+            import tensorflow as tf
+            self.tf = tf
             self.backend = 'tf_saved_model'
             self.tf_model = tf.saved_model.load(model_path)
             self.infer_fn = self.tf_model.signatures["serving_default"]
@@ -242,7 +247,7 @@ class BallTracker:
 
         return filtered_shots
 
-    def detect_frames(self, frames, read_from_stub=False, stub_path=None):
+    def detect_frames(self, frames, read_from_stub=False, stub_path=None, batch_size=1):
         """
         Run robust ball detection and tracking on a list of video frames,
         with static background noise suppression and directional momentum vector gating.
@@ -252,12 +257,25 @@ class BallTracker:
                 ball_detections = pickle.load(f)
             return ball_detections
 
-        print(f"[BallTracker] Running candidate extraction on {len(frames)} frames...")
+        print("[BallTracker] Running candidate extraction...")
         # 1. Extract raw candidate detections for each frame
         raw_candidates_per_frame = []
-        for frame in frames:
-            cands = self._detect_candidates(frame, conf=0.10)
-            raw_candidates_per_frame.append(cands)
+        if self.backend == 'ultralytics' and batch_size > 1:
+            frame_iter = iter(frames)
+            while batch := list(islice(frame_iter, batch_size)):
+                for result in self.model.predict(batch, conf=0.10, verbose=False):
+                    cands = []
+                    for box in result.boxes:
+                        coords = box.xyxy.tolist()[0]
+                        score = float(box.conf[0])
+                        cx = (coords[0] + coords[2]) / 2.0
+                        cy = (coords[1] + coords[3]) / 2.0
+                        cands.append({'box': coords, 'conf': score, 'center': np.array([cx, cy])})
+                    raw_candidates_per_frame.append(cands)
+        else:
+            for frame in frames:
+                raw_candidates_per_frame.append(self._detect_candidates(frame, conf=0.10))
+        total_frames = len(raw_candidates_per_frame)
 
         # 2. Automatically identify and suppress stationary background noise
         # A true static spot persists across a wide frame span (span >= 40 frames) with >= 10 detections
@@ -293,7 +311,7 @@ class BallTracker:
             dynamic_candidates.append(valid)
 
         # 3. Trajectory-Consistent Tracking with Directional Momentum & Velocity Gating
-        tracked_boxes = [None] * len(frames)
+        tracked_boxes = [None] * total_frames
         current_track = None
         current_vel = None
 
@@ -353,7 +371,7 @@ class BallTracker:
                         tracked_boxes[f_idx] = best['box']
 
         # Backward pass: recover earlier frames if track started late
-        for f_idx in range(len(frames) - 2, -1, -1):
+        for f_idx in range(total_frames - 2, -1, -1):
             if tracked_boxes[f_idx] is None and tracked_boxes[f_idx + 1] is not None:
                 next_box = tracked_boxes[f_idx + 1]
                 next_center = np.array([(next_box[0] + next_box[2]) / 2, (next_box[1] + next_box[3]) / 2])
@@ -391,7 +409,7 @@ class BallTracker:
             img_resized = cv2.resize(frame, (640, 640))
             img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
             if self.backend == 'tf_saved_model':
-                input_tensor = tf.convert_to_tensor(img_rgb[np.newaxis, ...], dtype=tf.float32) / 255.0
+                input_tensor = self.tf.convert_to_tensor(img_rgb[np.newaxis, ...], dtype=self.tf.float32) / 255.0
                 outputs = self.infer_fn(input_tensor)
                 output_tensor = list(outputs.values())[0].numpy()
             else:
@@ -445,22 +463,25 @@ class BallTracker:
 
         return np.array(boxes), np.array(scores)
 
-    def draw_bboxes(self, video_frames, ball_detections, draw_mode="tracer", max_trail=10):
+    def draw_bboxes(self, video_frames, ball_detections, draw_mode="tracer", max_trail=10,
+                    start_frame=0, ball_history=None):
         """
         Draw ball annotations on video frames.
         draw_mode: "tracer" (high-speed broadcast motion comet tail + glowing halo) or "box"
         """
         # Pre-extract center coordinates for all frames to build continuous trajectory
-        ball_history = []
-        for b_dict in ball_detections:
-            b = b_dict.get(1, [])
-            if len(b) == 4 and not np.isnan(b[0]):
-                ball_history.append(((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0))
-            else:
-                ball_history.append(None)
+        if ball_history is None:
+            ball_history = []
+            for b_dict in ball_detections:
+                b = b_dict.get(1, [])
+                if len(b) == 4 and not np.isnan(b[0]):
+                    ball_history.append(((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0))
+                else:
+                    ball_history.append(None)
 
         output_video_frames = []
-        for f_idx, (frame, ball_dict) in enumerate(zip(video_frames, ball_detections)):
+        for local_idx, (frame, ball_dict) in enumerate(zip(video_frames, ball_detections)):
+            f_idx = start_frame + local_idx
             if draw_mode == "tracer":
                 # Collect recent trail points within window
                 pts = []

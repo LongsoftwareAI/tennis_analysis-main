@@ -12,6 +12,17 @@ def read_video(video_path):
     cap.release()
     return frames
 
+def iter_video_frames(video_path):
+    cap = cv2.VideoCapture(video_path)
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            yield frame
+    finally:
+        cap.release()
+
 def save_video(output_video_frames, output_video_path):
     # Check if target file is locked by an external media player
     final_path = output_video_path
@@ -34,9 +45,14 @@ def save_video(output_video_frames, output_video_path):
                     idx += 1
             print(f"[Warning] '{output_video_path}' is currently open in a media player. Saving instead to '{final_path}'")
 
+    frames = iter(output_video_frames)
+    first_frame = next(frames)
     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    out = cv2.VideoWriter(final_path, fourcc, 24, (output_video_frames[0].shape[1], output_video_frames[0].shape[0]))
-    for frame in output_video_frames:
-        out.write(frame)
-    out.release()
+    out = cv2.VideoWriter(final_path, fourcc, 24, (first_frame.shape[1], first_frame.shape[0]))
+    try:
+        out.write(first_frame)
+        for frame in frames:
+            out.write(frame)
+    finally:
+        out.release()
     return final_path

@@ -300,7 +300,7 @@ class RefereeSystem:
 
         return self.decision_info
 
-    def draw_referee_overlay(self, video_frames, decision_info=None):
+    def draw_referee_overlay(self, video_frames, decision_info=None, start_frame=0):
         """
         Draw broadcast Hawk-Eye ELC Referee Decision Card, 2D Impact Zoom Inset,
         and Ground Collision Impact Shockwaves on output video frames.
@@ -323,7 +323,8 @@ class RefereeSystem:
 
         output_frames = []
 
-        for f_idx, frame in enumerate(video_frames):
+        for local_idx, frame in enumerate(video_frames):
+            f_idx = start_frame + local_idx
             # -----------------------------------------------------------------
             # 1. Ground Collision Shockwave & Impact Effect (Hiệu ứng bóng chạm đất)
             # -----------------------------------------------------------------
@@ -376,8 +377,9 @@ class RefereeSystem:
             # -----------------------------------------------------------------
             # Display referee VAR card starting from decisive bounce (Frame 362)
             if f_idx >= max(0, landing_frame - 1):
-                card_x, card_y = 35, 735
                 card_w, card_h = 675, 305
+                card_x = 35
+                card_y = min(735, max(0, frame.shape[0] - card_h - 35))
 
                 # Dark frosted glassmorphism background
                 overlay = frame.copy()
@@ -538,7 +540,11 @@ class RefereeSystem:
 
                 # Inset border
                 cv2.rectangle(court_patch, (0, 0), (iz_w - 1, iz_h - 1), (180, 180, 180), 1)
-                frame[iz_y : iz_y + iz_h, iz_x : iz_x + iz_w] = court_patch
+                x1, y1 = max(0, iz_x), max(0, iz_y)
+                x2 = min(frame.shape[1], iz_x + iz_w)
+                y2 = min(frame.shape[0], iz_y + iz_h)
+                if x2 > x1 and y2 > y1:
+                    frame[y1:y2, x1:x2] = court_patch[y1 - iz_y:y2 - iz_y, x1 - iz_x:x2 - iz_x]
 
             output_frames.append(frame)
 
