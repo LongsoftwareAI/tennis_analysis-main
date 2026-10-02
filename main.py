@@ -24,6 +24,7 @@ from court_line_detector import (
     CourtLineDetector,
     track_court_keypoints_cpv
 )
+from court_line_detector.court_segments import detect_court_segments, merge_court_frames
 from mini_court import MiniCourt
 
 def cache_is_current(stub_path, video_path, model_path):
@@ -34,7 +35,23 @@ def cache_is_current(stub_path, video_path, model_path):
         newest_input = max(newest_input, os.path.getmtime(model_path))
     return os.path.getmtime(stub_path) >= newest_input
 
-def main():
+def video_output_path(cfg, video_stem):
+    output_dir = cfg["video"].get("output_dir", "output_videos")
+    output_filename = cfg["video"].get("output_filename", "auto")
+    if output_filename and output_filename != "auto":
+        if os.path.isabs(output_filename) or os.path.dirname(output_filename):
+            output_path = output_filename
+        else:
+            output_path = os.path.join(output_dir, output_filename)
+    elif video_stem == "input_video":
+        output_path = os.path.join(output_dir, "output_video.mp4")
+    else:
+        output_path = os.path.join(output_dir, f"{video_stem}_analysis.mp4")
+
+    return output_path
+
+
+def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False):
     parser = argparse.ArgumentParser(description="Tennis Analysis Pipeline")
     parser.add_argument("--config", "-c", type=str, default="config.yaml",
                         help="Path to YAML configuration file (default: config.yaml)")
@@ -48,7 +65,7 @@ def main():
                         help="Force reading detections from stub cache")
     parser.add_argument("--no_stub", action="store_true",
                         help="Force live detection without reading from stub cache")
-    args = parser.parse_args()
+    args = parser.parse_args() if run_args is None else run_args
 
     # 1. Load Configuration
     cfg = load_config(args.config)
@@ -72,7 +89,8 @@ def main():
         cfg["tracking"]["force_live"] = False
         overrides["use_stubs"] = True
 
-    print_config_summary(cfg, overrides=overrides if overrides else None)
+    if frame_range is None:
+        print_config_summary(cfg, overrides=overrides if overrides else None)
 
     # 2. Read Video
     input_video_path = cfg["video"].get("input_path", "input_videos/input_video.mp4")
@@ -83,6 +101,10 @@ def main():
         
     cap = cv2.VideoCapture(input_video_path)
     video_fps = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    range_start, range_end = frame_range if frame_range is not None else (0, total_frames)
+    if range_start:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, range_start)
     has_frame, first_frame = cap.read()
     cap.release()
     if not has_frame:
@@ -91,19 +113,23 @@ def main():
         video_fps = 24.0
         print("[Warning] Could not determine input FPS; falling back to 24 FPS")
 
+    def video_frames():
+        return iter_video_frames(input_video_path, start_frame=range_start, end_frame=range_end)
+
     # 3. Determine Stubs and Caching
     video_stem = os.path.splitext(os.path.basename(input_video_path))[0]
+    cache_stem = video_stem if frame_range is None else f"{video_stem}_{range_start}_{range_end}"
     stubs_dir = cfg["tracking"].get("stubs_dir", "tracker_stubs")
     os.makedirs(stubs_dir, exist_ok=True)
 
-    if video_stem == "input_video":
+    if cache_stem == "input_video":
         player_stub = os.path.join(stubs_dir, "player_detections.pkl")
         ball_stub = os.path.join(stubs_dir, "ball_detections.pkl")
         court_stub = os.path.join(stubs_dir, "court_keypoints.pkl")
     else:
-        player_stub = os.path.join(stubs_dir, f"{video_stem}_player_detections.pkl")
-        ball_stub = os.path.join(stubs_dir, f"{video_stem}_ball_detections.pkl")
-        court_stub = os.path.join(stubs_dir, f"{video_stem}_court_keypoints.pkl")
+        player_stub = os.path.join(stubs_dir, f"{cache_stem}_player_detections.pkl")
+        ball_stub = os.path.join(stubs_dir, f"{cache_stem}_ball_detections.pkl")
+        court_stub = os.path.join(stubs_dir, f"{cache_stem}_court_keypoints.pkl")
 
     # 4. Configure Models
     models_cfg = cfg.get("models", {})
@@ -127,6 +153,29 @@ def main():
 
     # Court Line Detector: TrackNet-style PyTorch heatmaps
     court_model_path = models_cfg.get("court_model", "models/model_tennis_court_det.pt")
+    segment_detector = None
+    if auto_segment:
+        segment_detector = CourtLineDetector(court_model_path)
+        segments = detect_court_segments(input_video_path, segment_detector)
+        if segments != [(0, total_frames)]:
+            del segment_detector
+            if not segments:
+                print("[Court Segments] No full-court view found; keeping all frames without overlays")
+
+            def analyze_segment(start, end):
+                print(f"[Court Segments] Analyzing frames [{start}, {end}), "
+                      f"{start / video_fps:.2f}-{end / video_fps:.2f}s")
+                return main(args, auto_segment=False, frame_range=(start, end), return_frames=True)
+
+            output_path = video_output_path(cfg, video_stem)
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            saved_path = save_video(
+                merge_court_frames(iter_video_frames(input_video_path), segments, analyze_segment),
+                output_path, fps=video_fps,
+            )
+            print(f"\n=== Successfully generated tennis analysis video at {saved_path} ===")
+            return
+
     use_stubs = cfg["tracking"].get("use_stubs", True) and not cfg["tracking"].get("force_live", False)
     player_cache = use_stubs and cache_is_current(player_stub, input_video_path, player_model_path)
     ball_cache = use_stubs and cache_is_current(ball_stub, input_video_path, ball_model_path)
@@ -136,21 +185,21 @@ def main():
         and cache_is_current(court_stub, input_video_path, court_model_path)
         and cache_is_current(court_stub, input_video_path, court_tracker_source)
     )
-    print(f"[Pipeline] Cache for '{video_stem}': players={player_cache}, ball={ball_cache}, court={court_cache}")
+    print(f"[Pipeline] Cache for '{cache_stem}': players={player_cache}, ball={ball_cache}, court={court_cache}")
     print(f"[Pipeline] PyTorch device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
     player_tracker = PlayerTracker(model_path=player_model_path, load_model=not player_cache)
     ball_tracker = BallTracker(model_path=ball_model_path, load_model=not ball_cache)
-    court_line_detector = CourtLineDetector(court_model_path, load_model=not court_cache)
+    court_line_detector = segment_detector or CourtLineDetector(court_model_path, load_model=not court_cache)
 
     # 5. Detect Players and Ball
     player_detections = player_tracker.detect_frames(
-        iter_video_frames(input_video_path),
+        video_frames(),
         read_from_stub=player_cache,
         stub_path=player_stub
     )
     ball_detections = ball_tracker.detect_frames(
-        iter_video_frames(input_video_path),
+        video_frames(),
         read_from_stub=ball_cache,
         stub_path=ball_stub,
         batch_size=cfg["tracking"].get("ball_batch_size", 4)
@@ -160,7 +209,7 @@ def main():
     # 6. Court Keypoint Extraction (TrackNet-corrected CPV Optical Flow)
     print("[CourtLineDetector] TrackNet Heatmaps + Homography Init, then Lucas-Kanade + RANSAC...")
     court_keypoints = track_court_keypoints_cpv(
-        iter_video_frames(input_video_path),
+        video_frames(),
         detector=court_line_detector,
         stub_path=court_stub,
         read_from_stub=court_cache
@@ -324,7 +373,7 @@ def main():
                 ball_history.append(None)
 
     def render_frames():
-        frame_iter = iter_video_frames(input_video_path)
+        frame_iter = video_frames()
         for start in range(0, frame_count, 16):
             end = min(start + 16, frame_count)
             output_video_frames = list(islice(frame_iter, end - start))
@@ -364,26 +413,16 @@ def main():
 
             if vis_cfg.get("draw_frame_number", True):
                 for i, frame in enumerate(output_video_frames, start=start):
-                    cv2.putText(frame, f"Frame: {i}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(frame, f"Frame: {i + range_start}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
             yield from output_video_frames
         if next(frame_iter, None) is not None:
             raise ValueError("Input video has more frames than its detection data")
 
     # 11. Determine Output Destination
-    output_dir = cfg["video"].get("output_dir", "output_videos")
-    output_filename = cfg["video"].get("output_filename", "auto")
-
-    if output_filename and output_filename != "auto":
-        if os.path.isabs(output_filename) or os.path.dirname(output_filename) != "":
-            output_path = output_filename
-        else:
-            output_path = os.path.join(output_dir, output_filename)
-    elif video_stem == "input_video":
-        output_path = os.path.join(output_dir, "output_video.avi")
-    else:
-        output_path = os.path.join(output_dir, f"{video_stem}_analysis.avi")
-
+    if return_frames:
+        return render_frames()
+    output_path = video_output_path(cfg, video_stem)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     saved_path = save_video(render_frames(), output_path, fps=video_fps)
     print(f"\n=== Successfully generated tennis analysis video at {saved_path} ===")

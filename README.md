@@ -168,19 +168,19 @@ Hệ thống dùng mạng heatmap theo phương pháp [TennisCourtDetector](http
 [Frame 0] ───────────────► TrackNet 15 Heatmaps ───────────► Refine + Homography 14 Keypoints
                                                                    │
                                                                    ▼
-[Frame 1 ... N] ────────► Lucas-Kanade Optical Flow (CPV) ──► Cập nhật tọa độ theo camera
+[Frame 1 ... N] ────────► Lucas-Kanade Optical Flow (CPV) ──► Homography từ frame mốc
                                                                    │
                                                                    ▼
-                          RANSAC Homography Validation  ────► Kiểm tra tính cứng hình học sân
+                          RANSAC + kiểm tra bước dịch ───────► Tọa độ sân ổn định
 ```
 
 - **Khởi tạo thông minh**: Tại frame 0, TrackNet PyTorch suy luận 15 heatmaps ở độ phân giải `640x360`; 14 heatmaps đầu được hậu xử lý bằng Hough/refinement và homography để khôi phục các điểm bị che.
 - **Theo dõi dòng quang học đa tầng (Pyramidal Lucas-Kanade)**:
   - Hàm `cv2.calcOpticalFlowPyrLK` theo dõi hai chiều và loại các feature có forward-backward error lớn trước khi ước lượng chuyển động camera.
   - Bám sát từng cử động lia máy (pan), nghiêng máy (tilt) hoặc phóng to/thu nhỏ (zoom) của camera truyền hình.
-- **Ràng buộc Homography qua RANSAC**: Sử dụng `cv2.findHomography` thay cho affine transform để mô hình hóa đầy đủ biến đổi phối cảnh khi camera di chuyển.
-- **Tự hiệu chỉnh drift**: Chạy lại TrackNet mỗi 60 frame, ngay khi camera dịch chuyển mạnh hoặc khi optical flow mất transform; sau đó tiếp tục tracking từ bộ keypoints mới.
-- **Ưu điểm**: Giảm rõ rệt hiện tượng keypoints trôi khỏi vạch khi camera pan/tilt/zoom, đồng thời tránh phải chạy model trên mọi frame tĩnh.
+- **Frame mốc và chuyển động tích lũy**: Ước lượng homography so với bộ feature của frame mốc gần nhất. Chỉ giữ nguyên điểm khi chuyển động tích lũy còn dưới mức nhiễu; pan/zoom chậm vẫn được theo dõi. Nếu phép biến đổi không hợp lý, giữ tọa độ cũ và lấy lại feature trên frame hiện tại.
+- **Tự hiệu chỉnh có kiểm tra**: Chạy lại TrackNet định kỳ hoặc khi mất bám. Chỉ nhận tọa độ mới khi các vạch sân dự kiến khớp ảnh tốt hơn hoặc đủ gần tọa độ đang theo dõi. Sai số được phân bổ lên các frame gần nhất để tránh cú nhảy ở frame tái-detect.
+- **Giới hạn**: Nếu vạch sân khuất nhiều hoặc máy quay chuyển sang góc không nhìn thấy sân, tracker có thể giữ điểm cũ cho đến khi nhận được detection hợp lệ.
 
 ---
 
@@ -338,6 +338,8 @@ Chạy chương trình:
 python main.py
 ```
 
+Trước khi tracking, chương trình dùng court detector quét mỗi khoảng 0,5 giây để tìm những đoạn camera nhìn thấy đủ sân (tối thiểu 2 giây), rồi kiểm tra từng frame gần mép đoạn. Chương trình vẫn xuất **một MP4 đủ thời lượng và FPS gốc**: chỉ các frame thuộc đoạn đủ sân mới chạy court/player/ball detection và nhận overlay; các frame còn lại giữ hình gốc, không gắn point. Mỗi đoạn đủ sân khởi tạo tracking và thống kê riêng để không nối trạng thái qua lần chuyển cảnh. Không có đoạn đủ sân thì video vẫn được xuất nhưng không có overlay. Đây là phát hiện **góc nhìn toàn sân**, không phải nhận diện riêng thời gian bóng đang trong rally; cảnh ngắn hơn chu kỳ lấy mẫu có thể không được phát hiện.
+
 ### 3. Ghi đè tham số qua dòng lệnh (CLI Overrides)
 Bạn cũng có thể chạy trực tiếp với các cờ dòng lệnh mà không cần sửa file cấu hình:
 ```powershell
@@ -423,7 +425,8 @@ tennis_analysis-main/
 │   ├── court_heatmap_model.py     # Kiến trúc TrackNet heatmap 15 channels
 │   ├── court_postprocess.py       # Hough refinement + homography reconstruction
 │   ├── court_line_detector.py     # PyTorch detector khởi tạo 14 keypoints ở frame 0
-│   └── cpv_court_tracker.py       # ⭐ Thuật toán bám vạch sân quang học Pure CPV Optical Flow
+│   ├── cpv_court_tracker.py       # ⭐ Thuật toán bám vạch sân quang học Pure CPV Optical Flow
+│   └── court_segments.py          # Chọn các đoạn camera nhìn thấy đủ sân
 │
 ├── trackers/                      # Module bám vết đối tượng
 │   ├── player_tracker.py          # Player Tracker + Multi-Track Stitching + Net Filtering

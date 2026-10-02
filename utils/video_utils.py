@@ -12,14 +12,18 @@ def read_video(video_path):
     cap.release()
     return frames
 
-def iter_video_frames(video_path):
+def iter_video_frames(video_path, start_frame=0, end_frame=None):
     cap = cv2.VideoCapture(video_path)
     try:
-        while True:
+        if start_frame:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        frame_index = start_frame
+        while end_frame is None or frame_index < end_frame:
             ret, frame = cap.read()
             if not ret:
                 break
             yield frame
+            frame_index += 1
     finally:
         cap.release()
 
@@ -47,7 +51,7 @@ def save_video(output_video_frames, output_video_path, fps=24.0):
 
     frames = iter(output_video_frames)
     first_frame = next(frames)
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(final_path, fourcc, fps, (first_frame.shape[1], first_frame.shape[0]))
     try:
         out.write(first_frame)

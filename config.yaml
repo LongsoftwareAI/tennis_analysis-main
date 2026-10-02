@@ -23,8 +23,8 @@ video:
   output_dir: "output_videos"
 
   # Tên file video xuất ra.
-  # "auto": Tự động đặt tên theo cấu trúc <tên_video>_analysis.avi
-  # Hoặc bạn có thể tự đặt tên cụ thể: "my_result.avi"
+  # "auto": Tự động đặt tên theo cấu trúc <tên_video>_analysis.mp4
+  # Hoặc bạn có thể tự đặt tên cụ thể: "my_result.mp4"
   output_filename: "auto"
 
 # ------------------------------------------------------------------------------

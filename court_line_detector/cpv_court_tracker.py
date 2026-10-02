@@ -5,6 +5,39 @@ import cv2
 import numpy as np
 
 
+COURT_LINE_SEGMENTS = np.array(
+    ((0, 1), (0, 2), (1, 3), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11), (12, 13))
+)
+
+
+def court_line_contrast(gray, points):
+    """Measure how well projected court lines align with bright image lines."""
+    starts = points[COURT_LINE_SEGMENTS[:, 0]]
+    directions = points[COURT_LINE_SEGMENTS[:, 1]] - starts
+    lengths = np.linalg.norm(directions, axis=1)
+    if np.any(lengths < 1.0):
+        return -np.inf
+    normals = np.stack((-directions[:, 1], directions[:, 0]), axis=1) / lengths[:, None]
+    centers = starts[:, None, :] + directions[:, None, :] * np.linspace(.08, .92, 16)[None, :, None]
+    sides = normals[:, None, :] * 5.0
+    height, width = gray.shape
+    valid = (
+        (centers[:, :, 0] >= 6) & (centers[:, :, 0] < width - 6)
+        & (centers[:, :, 1] >= 6) & (centers[:, :, 1] < height - 6)
+    )
+    if np.count_nonzero(valid) < 40:
+        return -np.inf
+
+    def sample(locations):
+        return cv2.remap(
+            gray, locations[:, :, 0].astype(np.float32),
+            locations[:, :, 1].astype(np.float32), cv2.INTER_LINEAR,
+        ).astype(np.float32)
+
+    contrast = sample(centers) - (sample(centers - sides) + sample(centers + sides)) / 2.0
+    return float(np.mean(contrast[valid]))
+
+
 def estimate_court_homography(previous_points, current_points, reprojection_threshold=3.0):
     """Estimate full perspective camera motion and report its RANSAC inlier ratio."""
     previous_points = np.asarray(previous_points, dtype=np.float32).reshape((-1, 2))
@@ -32,19 +65,16 @@ def track_court_keypoints_cpv(
     redetect_interval=60,
 ):
     """
-    [HYBRID: TRACKNET CORRECTION + CPV OPTICAL FLOW TRACKING]
+    [HYBRID: TRACKNET CORRECTION + KEYFRAME OPTICAL FLOW TRACKING]
     
     Thuật toán tracking vạch sân hybrid TrackNet + Computer Vision (CPV):
     1. Frame 0: Nhận diện chính xác 14 keypoint bằng mô hình AI + Line Refinement.
     2. Từ Frame 1 đến hết: Sử dụng Lucas-Kanade Optical Flow hai chiều kết hợp
-       Homography RANSAC trên các điểm đặc trưng tĩnh của mặt sân.
+       Homography RANSAC so với frame mốc gần nhất.
     
     Ưu điểm:
-    - Bám dính chính xác từng pixel theo thời gian thực (Zero Lag, không bị trễ do lọc trung bình).
-    - Giảm drift khi camera pan, tilt hoặc zoom bằng homography và tái-detect thích nghi.
-    - Miễn nhiễm với biển quảng cáo, khán đài và bóng người di chuyển nhờ RANSAC Outlier Rejection.
-    - Duy trì tốc độ xấp xỉ realtime trên GPU; tốc độ phụ thuộc số lần TrackNet tái-detect.
-    - Hoàn toàn độc lập, dễ dàng bật/tắt hoặc gỡ bỏ.
+    - Giữ điểm ổn định khi nền sân đứng yên nhưng vẫn theo được pan/tilt/zoom chậm.
+    - Chỉ nhận tái-detect khi vạch sân trong ảnh hỗ trợ tọa độ mới.
 
     Parameters:
     -----------
@@ -87,7 +117,7 @@ def track_court_keypoints_cpv(
 
     all_kps = [kps_0.copy()]
 
-    # 3. Tạo mặt nạ vùng sân (Court Mask) để chỉ bắt đặc trưng mặt sân, loại trừ khán đài & biển quảng cáo
+    # 3. Giới hạn vùng tìm feature gần sân; đây là vùng xấp xỉ, không phải phân đoạn sân.
     h, w = first_frame.shape[:2]
     court_mask = np.zeros((h, w), dtype=np.uint8)
     court_mask[int(h * 0.25):int(h * 0.95), int(w * 0.10):int(w * 0.90)] = 255
@@ -102,14 +132,21 @@ def track_court_keypoints_cpv(
         minDistance=15,
         mask=court_mask
     )
+    anchor_pts = current_pts.copy()
+    anchor_pts_features = prev_pts_features.copy() if prev_pts_features is not None else None
+    lost_frames = 0
+    last_redetection = 0
+    last_accepted_detection = 0
 
     # 4. Tracking liên tục qua từng frame bằng Lucas-Kanade Optical Flow + RANSAC Homography
     for f_idx, frame in enumerate(frames, start=1):
         curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         transform_applied = False
         camera_motion = 0.0
+        static_scene = False
+        refresh_features = False
 
-        if prev_pts_features is not None and len(prev_pts_features) >= 10:
+        if prev_pts_features is not None and anchor_pts_features is not None and len(prev_pts_features) >= 10:
             next_pts_features, status, _ = cv2.calcOpticalFlowPyrLK(
                 prev_gray, curr_gray, prev_pts_features, None,
                 winSize=(21, 21), maxLevel=3,
@@ -118,6 +155,7 @@ def track_court_keypoints_cpv(
             if next_pts_features is None or status is None:
                 good_prev = np.empty((0, 2), dtype=np.float32)
                 good_next = np.empty((0, 2), dtype=np.float32)
+                good_anchor = np.empty((0, 2), dtype=np.float32)
             else:
                 back_pts_features, back_status, _ = cv2.calcOpticalFlowPyrLK(
                     curr_gray, prev_gray, next_pts_features, None,
@@ -137,50 +175,85 @@ def track_court_keypoints_cpv(
                     valid[:] = False
                 good_prev = prev_pts_features.reshape((-1, 2))[valid]
                 good_next = next_pts_features.reshape((-1, 2))[valid]
+                good_anchor = anchor_pts_features.reshape((-1, 2))[valid]
 
             if len(good_prev) >= 8:
-                matrix, inlier_ratio = estimate_court_homography(good_prev, good_next)
-                if matrix is not None and inlier_ratio >= 0.5:
-                    transformed_points = cv2.perspectiveTransform(
-                        current_pts.reshape((-1, 1, 2)), matrix
-                    ).reshape((-1, 2))
-                    camera_motion = float(
-                        np.median(np.linalg.norm(transformed_points - current_pts, axis=1))
-                    )
-                    current_pts = transformed_points
-                    transform_applied = True
-
-            # Bổ sung lại feature points nếu số lượng điểm bám bị giảm
-            if len(good_next) < 80:
-                prev_pts_features = cv2.goodFeaturesToTrack(
-                    curr_gray, maxCorners=250, qualityLevel=0.03, minDistance=15, mask=court_mask
+                accumulated_flow = np.linalg.norm(good_next - good_anchor, axis=1)
+                static_scene = (
+                    np.median(accumulated_flow) < 0.6
+                    and np.percentile(accumulated_flow, 90) < 1.2
                 )
+                if static_scene:
+                    # A brief low-flow estimate must not snap points back to an old anchor.
+                    if np.median(np.linalg.norm(current_pts - anchor_pts, axis=1)) < 0.6:
+                        current_pts = anchor_pts.copy()
+                    else:
+                        refresh_features = True
+                    transform_applied = True
+                else:
+                    matrix, inlier_ratio = estimate_court_homography(good_anchor, good_next)
+                    if matrix is not None and inlier_ratio >= 0.5:
+                        transformed_points = cv2.perspectiveTransform(
+                            anchor_pts.reshape((-1, 1, 2)), matrix
+                        ).reshape((-1, 2))
+                        point_step = np.linalg.norm(transformed_points - current_pts, axis=1)
+                        feature_step = np.linalg.norm(good_next - good_prev, axis=1)
+                        step_limit = max(8.0, 6.0 * np.percentile(feature_step, 90))
+                        if np.isfinite(transformed_points).all() and np.percentile(point_step, 90) <= step_limit:
+                            camera_motion = float(np.median(point_step))
+                            current_pts = transformed_points
+                            transform_applied = True
+                        else:
+                            # Bad feature geometry: keep the last good court and start a fresh keyframe.
+                            refresh_features = True
+
+            if len(good_next) < 80:
+                refresh_features = True
             else:
                 prev_pts_features = good_next.reshape(-1, 1, 2)
+                anchor_pts_features = good_anchor.reshape(-1, 1, 2)
         else:
-            prev_pts_features = cv2.goodFeaturesToTrack(
-                curr_gray, maxCorners=250, qualityLevel=0.03, minDistance=15, mask=court_mask
-            )
+            refresh_features = True
 
+        lost_frames = 0 if transform_applied else lost_frames + 1
         periodic_redetection = redetect_interval and f_idx % redetect_interval == 0
-        recovery_redetection = not transform_applied and f_idx % 12 == 0
+        recovery_redetection = lost_frames >= 12
         motion_redetection = camera_motion >= 2.5
-        if detector is not None and (
+        if detector is not None and f_idx - last_redetection >= 12 and (
             periodic_redetection or recovery_redetection or motion_redetection
         ):
+            last_redetection = f_idx
             try:
                 detected_points = np.asarray(detector.predict(frame), dtype=np.float32).reshape((-1, 2))
                 if detected_points.shape == (14, 2) and np.isfinite(detected_points).all():
-                    current_pts = detected_points
-                    prev_pts_features = cv2.goodFeaturesToTrack(
-                        curr_gray,
-                        maxCorners=250,
-                        qualityLevel=0.03,
-                        minDistance=15,
-                        mask=court_mask,
+                    disagreement = np.median(np.linalg.norm(detected_points - current_pts, axis=1))
+                    tracked_score = court_line_contrast(curr_gray, current_pts)
+                    detected_score = court_line_contrast(curr_gray, detected_points)
+                    supported = detected_score >= 15.0 and (
+                        (disagreement <= 3.0 and detected_score >= tracked_score - 5.0)
+                        or (disagreement <= 20.0 and detected_score >= tracked_score + 15.0)
                     )
+                    if supported:
+                        if disagreement > 1.0 and not recovery_redetection:
+                            # Spread a verified correction over recent frames instead of snapping now.
+                            start = max(last_accepted_detection, f_idx - 60)
+                            correction = (detected_points - current_pts).reshape(-1)
+                            for index in range(start + 1, f_idx):
+                                fraction = (index - start) / (f_idx - start)
+                                all_kps[index] += correction * fraction
+                        current_pts = detected_points
+                        lost_frames = 0
+                        last_accepted_detection = f_idx
+                        refresh_features = True
             except RuntimeError:
                 pass
+
+        if refresh_features:
+            anchor_pts = current_pts.copy()
+            prev_pts_features = cv2.goodFeaturesToTrack(
+                curr_gray, maxCorners=250, qualityLevel=0.03, minDistance=15, mask=court_mask
+            )
+            anchor_pts_features = prev_pts_features.copy() if prev_pts_features is not None else None
 
         prev_gray = curr_gray
 
