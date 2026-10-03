@@ -54,43 +54,58 @@ class PlayerTracker:
         - Singles mode (2 players): Player 1 (Near court) vs Player 2 (Far court).
         - Doubles mode (4 players): Team 1 (P1 & P3 Near court) vs Team 2 (P2 & P4 Far court).
         - Auto mode: Dynamically detects whether court has 2 players (Singles) or 4 players (Doubles).
-        Filters out all spectators, chair umpires, line judges, and ball boys.
+        Filters out all spectators, chair umpires, line judges, and ball boys using
+        perspective-aware trapezoid court perimeter gating and cumulative kinetic activity scoring.
         """
         if not player_detections or len(player_detections) == 0:
             return player_detections
 
-        # Determine net line and court bounding box dynamically from court keypoints
+        # Determine net line and perspective court trapezoid dynamically from court keypoints
         ref_kps = court_keypoints[0] if (court_keypoints is not None and len(court_keypoints) > 0 and hasattr(court_keypoints[0], '__len__')) else court_keypoints
-        if ref_kps is not None and len(ref_kps) >= 28:
-            xs = [ref_kps[i] for i in range(0, len(ref_kps), 2)]
-            ys = [ref_kps[i + 1] for i in range(0, len(ref_kps), 2)]
-            min_x, max_x = min(xs), max(xs)
-            min_y, max_y = min(ys), max(ys)
-            court_w = max_x - min_x
-            court_h = max_y - min_y
-            
-            # Net line Y is the midpoint between top and bottom service lines
-            net_y = (ref_kps[2 * 8 + 1] + ref_kps[2 * 10 + 1]) / 2.0
-            
-            # Dynamic perimeter with buffer for players behind baseline & outside sidelines
-            valid_x_min = min_x - court_w * 0.35
-            valid_x_max = max_x + court_w * 0.35
-            valid_y_min = min_y - court_h * 0.40
-            valid_y_max = max_y + court_h * 0.40
+        has_court = (ref_kps is not None and len(ref_kps) >= 28)
+
+        if has_court:
+            x0, y0 = float(ref_kps[0]), float(ref_kps[1])  # Far-left baseline corner
+            x1, y1 = float(ref_kps[2]), float(ref_kps[3])  # Far-right baseline corner
+            x2, y2 = float(ref_kps[4]), float(ref_kps[5])  # Near-left baseline corner
+            x3, y3 = float(ref_kps[6]), float(ref_kps[7])  # Near-right baseline corner
+
+            y_far = (y0 + y1) / 2.0
+            y_near = (y2 + y3) / 2.0
+            court_h = max(1.0, y_near - y_far)
+
+            # Net line Y is the midpoint between top and bottom service lines (indices 8, 10)
+            net_y = (float(ref_kps[2 * 8 + 1]) + float(ref_kps[2 * 10 + 1])) / 2.0
+
+            # Vertical depth bounds: players can run behind far baseline or near baseline
+            y_min = y_far - 0.35 * court_h
+            y_max = y_near + 0.35 * court_h
+
+            def is_inside_playing_perimeter(cx, cy):
+                if cy < y_min or cy > y_max:
+                    return False
+                # Perspective interpolation factor along court depth
+                alpha = np.clip((cy - y_far) / court_h, -0.35, 1.35)
+                x_left = x0 + alpha * (x2 - x0)
+                x_right = x1 + alpha * (x3 - x1)
+                court_w = max(10.0, x_right - x_left)
+                # Players run outside doubles sidelines by at most 22% of local court width
+                margin = 0.22 * court_w
+                return (x_left - margin) <= cx <= (x_right + margin)
         else:
             net_y = 530.0
-            valid_x_min, valid_x_max = 50.0, 1900.0
-            valid_y_min, valid_y_max = 50.0, 1050.0
+            def is_inside_playing_perimeter(cx, cy):
+                return (100.0 <= cx <= 1820.0 and 80.0 <= cy <= 1040.0)
 
-        # Collect track statistics across all frames
+        # Collect track statistics across all frames for tracks inside the playing perimeter
         track_stats = {}
         for p_dict in player_detections:
             for track_id, bbox in p_dict.items():
                 cx = (bbox[0] + bbox[2]) / 2.0
                 cy = (bbox[1] + bbox[3]) / 2.0
 
-                # Filter out spectators far outside court perimeter
-                if cx < valid_x_min or cx > valid_x_max or cy < valid_y_min or cy > valid_y_max:
+                # Strictly reject spectators, chair umpires, ball boys outside playing trapezoid
+                if not is_inside_playing_perimeter(cx, cy):
                     continue
 
                 if track_id not in track_stats:
@@ -99,53 +114,74 @@ class PlayerTracker:
                 track_stats[track_id]['xs'].append(cx)
 
         # Classify candidate tracks for Near court (y > net_y) and Far court (y <= net_y)
-        # Active players move on the court (dy >= 20 or dx >= 30), whereas stationary judges/ball kids have small movement
+        # Active tennis players move dynamically across court; stationary ball boys / judges are heavily penalized
         near_candidates = {}
         far_candidates = {}
+        total_frames = len(player_detections)
 
         for track_id, stats in track_stats.items():
             count = len(stats['ys'])
             if count < 5:
                 continue
-            avg_y = float(np.mean(stats['ys']))
-            dy = max(stats['ys']) - min(stats['ys'])
-            dx = max(stats['xs']) - min(stats['xs'])
-            
-            # An active player has vertical or lateral movement on court
-            if dy >= 20 or dx >= 30:
-                if avg_y > net_y:
-                    near_candidates[track_id] = count
-                else:
-                    far_candidates[track_id] = count
 
-        # Fallback if no candidate found: pick track with most frames on that side
+            pts = np.column_stack((stats['xs'], stats['ys']))
+            diffs = np.diff(pts, axis=0)
+            path_len = float(np.sum(np.hypot(diffs[:, 0], diffs[:, 1]))) if len(pts) > 1 else 0.0
+            avg_y = float(np.mean(stats['ys']))
+            dx = float(max(stats['xs']) - min(stats['xs']))
+            dy = float(max(stats['ys']) - min(stats['ys']))
+
+            # Real tennis player moves across court; stationary noise is heavily penalized
+            activity_mult = (1.0 + min(path_len / 150.0, 4.0))
+            if dx < 30.0 and dy < 20.0:
+                activity_mult *= 0.15  # Heavy penalty for stationary judge / ball boy
+
+            score = count * activity_mult
+
+            if avg_y > net_y:
+                near_candidates[track_id] = score
+            else:
+                far_candidates[track_id] = score
+
+        # Fallback if no candidate found: pick track with highest frames on that side
         if not near_candidates:
             near_by_count = {t: len(s['ys']) for t, s in track_stats.items() if np.mean(s['ys']) > net_y}
             if near_by_count:
                 top_near = max(near_by_count.keys(), key=lambda t: near_by_count[t])
-                near_candidates[top_near] = near_by_count[top_near]
+                near_candidates[top_near] = float(near_by_count[top_near])
 
         if not far_candidates:
             far_by_count = {t: len(s['ys']) for t, s in track_stats.items() if np.mean(s['ys']) <= net_y}
             if far_by_count:
                 top_far = max(far_by_count.keys(), key=lambda t: far_by_count[t])
-                far_candidates[top_far] = far_by_count[top_far]
+                far_candidates[top_far] = float(far_by_count[top_far])
 
-        total_frames = len(player_detections)
-        # Sort candidates by persistent frame count
+        # Sort candidates by overall kinetic activity score
         sorted_near = sorted(near_candidates.keys(), key=lambda t: near_candidates[t], reverse=True)
         sorted_far = sorted(far_candidates.keys(), key=lambda t: far_candidates[t], reverse=True)
+
+        if not sorted_near:
+            sorted_near = [1]
+            near_candidates[1] = 1.0
+        if not sorted_far:
+            sorted_far = [2]
+            far_candidates[2] = 1.0
 
         # Determine Singles vs Doubles match
         is_doubles = False
         if match_mode == "doubles":
             is_doubles = True
         elif match_mode == "auto":
-            # Auto-detect: Doubles match if both Near and Far courts have at least 2 active players
-            strong_near = [t for t in sorted_near if near_candidates[t] >= max(10, int(total_frames * 0.25))]
-            strong_far = [t for t in sorted_far if far_candidates[t] >= max(10, int(total_frames * 0.25))]
+            # Auto-detect Doubles ONLY if both sides have 2 distinct active players
+            # with high frame presence (>= 45%), significant path travel, and lateral separation
+            min_presence = max(15, int(total_frames * 0.45))
+            strong_near = [t for t in sorted_near if len(track_stats[t]['xs']) >= min_presence]
+            strong_far = [t for t in sorted_far if len(track_stats[t]['xs']) >= min_presence]
             if len(strong_near) >= 2 and len(strong_far) >= 2:
-                is_doubles = True
+                near_sep = abs(np.mean(track_stats[strong_near[0]]['xs']) - np.mean(track_stats[strong_near[1]]['xs']))
+                far_sep = abs(np.mean(track_stats[strong_far[0]]['xs']) - np.mean(track_stats[strong_far[1]]['xs']))
+                if near_sep >= 120.0 and far_sep >= 100.0:
+                    is_doubles = True
 
         if is_doubles:
             primary_p1 = sorted_near[0]
@@ -153,8 +189,8 @@ class PlayerTracker:
             primary_p2 = sorted_far[0]
             secondary_p4 = sorted_far[1] if len(sorted_far) > 1 else sorted_far[0]
             print(f"[PlayerTracker] Mode: DOUBLES (4 Players)")
-            print(f"  - Team 1 (Near): P1 (Track {primary_p1}), P3 (Track {secondary_p3}) | Near candidates: {sorted_near}")
-            print(f"  - Team 2 (Far) : P2 (Track {primary_p2}), P4 (Track {secondary_p4}) | Far candidates: {sorted_far}")
+            print(f"  - Team 1 (Near): P1 (Track {primary_p1}), P3 (Track {secondary_p3}) | Candidates: {sorted_near}")
+            print(f"  - Team 2 (Far) : P2 (Track {primary_p2}), P4 (Track {secondary_p4}) | Candidates: {sorted_far}")
         else:
             primary_p1 = sorted_near[0]
             primary_p2 = sorted_far[0]
@@ -171,42 +207,48 @@ class PlayerTracker:
         for player_dict in player_detections:
             frame_res = {}
 
+            # Filter out any detection in current frame outside playing perimeter
+            valid_p_dict = {}
+            for t, box in player_dict.items():
+                cx = (box[0] + box[2]) / 2.0
+                cy = (box[1] + box[3]) / 2.0
+                if is_inside_playing_perimeter(cx, cy):
+                    valid_p_dict[t] = box
+
             # --- 1. Near Court Assignment (Team 1) ---
             if not is_doubles:
                 # Singles: P1
-                if primary_p1 in player_dict:
-                    frame_res[1] = player_dict[primary_p1]
+                if primary_p1 in valid_p_dict:
+                    frame_res[1] = valid_p_dict[primary_p1]
                 else:
-                    p1_cands = [t for t in sorted_near if t in player_dict]
+                    p1_cands = [t for t in sorted_near if t in valid_p_dict]
                     if p1_cands:
                         best_p1 = max(p1_cands, key=lambda t: near_candidates[t])
-                        frame_res[1] = player_dict[best_p1]
+                        frame_res[1] = valid_p_dict[best_p1]
                 if 1 in frame_res:
                     last_positions[1] = ((frame_res[1][0] + frame_res[1][2]) / 2.0, (frame_res[1][1] + frame_res[1][3]) / 2.0)
             else:
                 # Doubles: P1 and P3 on Near Court
-                available_near = [t for t in player_dict if t in near_candidates]
-                # Prioritize primary tracks
+                available_near = [t for t in valid_p_dict if t in near_candidates]
                 used_tracks = set()
                 if primary_p1 in available_near:
-                    frame_res[1] = player_dict[primary_p1]
+                    frame_res[1] = valid_p_dict[primary_p1]
                     used_tracks.add(primary_p1)
                 if secondary_p3 in available_near and secondary_p3 != primary_p1:
-                    frame_res[3] = player_dict[secondary_p3]
+                    frame_res[3] = valid_p_dict[secondary_p3]
                     used_tracks.add(secondary_p3)
 
                 remaining = [t for t in available_near if t not in used_tracks]
-                # Fill missing slots using proximity to last known positions
                 for slot in (1, 3):
                     if slot not in frame_res and remaining:
                         if slot in last_positions:
                             best_t = min(remaining, key=lambda t: np.hypot(
-                                (player_dict[t][0] + player_dict[t][2]) / 2.0 - last_positions[slot][0],
-                                (player_dict[t][1] + player_dict[t][3]) / 2.0 - last_positions[slot][1]
+                                (valid_p_dict[t][0] + valid_p_dict[t][2]) / 2.0 - last_positions[slot][0],
+                                (valid_p_dict[t][1] + valid_p_dict[t][3]) / 2.0 - last_positions[slot][1]
                             ))
                         else:
                             best_t = remaining[0]
-                        frame_res[slot] = player_dict[best_t]
+                        frame_res[slot] = valid_p_dict[best_t]
                         remaining.remove(best_t)
 
                 for slot in (1, 3):
@@ -216,24 +258,24 @@ class PlayerTracker:
             # --- 2. Far Court Assignment (Team 2) ---
             if not is_doubles:
                 # Singles: P2
-                if primary_p2 in player_dict:
-                    frame_res[2] = player_dict[primary_p2]
+                if primary_p2 in valid_p_dict:
+                    frame_res[2] = valid_p_dict[primary_p2]
                 else:
-                    p2_cands = [t for t in sorted_far if t in player_dict]
+                    p2_cands = [t for t in sorted_far if t in valid_p_dict]
                     if p2_cands:
                         best_p2 = max(p2_cands, key=lambda t: far_candidates[t])
-                        frame_res[2] = player_dict[best_p2]
+                        frame_res[2] = valid_p_dict[best_p2]
                 if 2 in frame_res:
                     last_positions[2] = ((frame_res[2][0] + frame_res[2][2]) / 2.0, (frame_res[2][1] + frame_res[2][3]) / 2.0)
             else:
                 # Doubles: P2 and P4 on Far Court
-                available_far = [t for t in player_dict if t in far_candidates]
+                available_far = [t for t in valid_p_dict if t in far_candidates]
                 used_tracks = set()
                 if primary_p2 in available_far:
-                    frame_res[2] = player_dict[primary_p2]
+                    frame_res[2] = valid_p_dict[primary_p2]
                     used_tracks.add(primary_p2)
                 if secondary_p4 in available_far and secondary_p4 != primary_p2:
-                    frame_res[4] = player_dict[secondary_p4]
+                    frame_res[4] = valid_p_dict[secondary_p4]
                     used_tracks.add(secondary_p4)
 
                 remaining = [t for t in available_far if t not in used_tracks]
@@ -241,12 +283,12 @@ class PlayerTracker:
                     if slot not in frame_res and remaining:
                         if slot in last_positions:
                             best_t = min(remaining, key=lambda t: np.hypot(
-                                (player_dict[t][0] + player_dict[t][2]) / 2.0 - last_positions[slot][0],
-                                (player_dict[t][1] + player_dict[t][3]) / 2.0 - last_positions[slot][1]
+                                (valid_p_dict[t][0] + valid_p_dict[t][2]) / 2.0 - last_positions[slot][0],
+                                (valid_p_dict[t][1] + valid_p_dict[t][3]) / 2.0 - last_positions[slot][1]
                             ))
                         else:
                             best_t = remaining[0]
-                        frame_res[slot] = player_dict[best_t]
+                        frame_res[slot] = valid_p_dict[best_t]
                         remaining.remove(best_t)
 
                 for slot in (2, 4):

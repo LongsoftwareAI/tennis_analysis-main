@@ -59,6 +59,8 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
                         help="Override input video path specified in config.yaml")
     parser.add_argument("--output", "-o", type=str, default=None,
                         help="Override output video path or filename")
+    parser.add_argument("--ball_detector", "-b", type=str, default=None, choices=["tracknet", "yolo"],
+                        help="Ball detector engine: 'tracknet' (TrackNetV4 Keras) or 'yolo' (YOLO26 PyTorch)")
     parser.add_argument("--court_mode", "-m", type=str, default="cpv",
                         help="Court tracking mode: 'cpv' (Pure CPV Optical Flow Tracking)")
     parser.add_argument("--device", "-d", type=str, default=None, choices=["auto", "cuda", "cpu"],
@@ -79,6 +81,9 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     if args.output is not None:
         cfg["video"]["output_filename"] = args.output
         overrides["output"] = args.output
+    if args.ball_detector is not None:
+        cfg["tracking"]["ball_detector"] = args.ball_detector
+        overrides["ball_detector"] = args.ball_detector
     if args.court_mode is not None:
         cfg["tracking"]["court_mode"] = args.court_mode
         overrides["court_mode"] = args.court_mode
@@ -93,6 +98,12 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
         cfg["tracking"]["use_stubs"] = True
         cfg["tracking"]["force_live"] = False
         overrides["use_stubs"] = True
+
+    active_detector = str(cfg.get("tracking", {}).get("ball_detector", "hybrid")).lower()
+    if active_detector == "yolo":
+        cfg["models"]["ball_model"] = cfg.get("models", {}).get("ball_model_yolo", "models/ball_detector_yolo26_best.pt")
+    else:
+        cfg["models"]["ball_model"] = cfg.get("models", {}).get("ball_model_tracknet", "models/tracknet_weights.pth")
 
     if frame_range is None:
         print_config_summary(cfg, overrides=overrides if overrides else None)
@@ -127,13 +138,17 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     stubs_dir = cfg["tracking"].get("stubs_dir", "tracker_stubs")
     os.makedirs(stubs_dir, exist_ok=True)
 
+    ball_detector_type = str(cfg.get("tracking", {}).get("ball_detector", "hybrid")).lower()
+    if ball_detector_type not in ("tracknet", "yolo", "hybrid"):
+        ball_detector_type = "hybrid"
+
     if cache_stem == "input_video":
         player_stub = os.path.join(stubs_dir, "player_detections.pkl")
-        ball_stub = os.path.join(stubs_dir, "ball_detections.pkl")
+        ball_stub = os.path.join(stubs_dir, f"{ball_detector_type}_ball_detections.pkl")
         court_stub = os.path.join(stubs_dir, "court_keypoints.pkl")
     else:
         player_stub = os.path.join(stubs_dir, f"{cache_stem}_player_detections.pkl")
-        ball_stub = os.path.join(stubs_dir, f"{cache_stem}_ball_detections.pkl")
+        ball_stub = os.path.join(stubs_dir, f"{cache_stem}_{ball_detector_type}_ball_detections.pkl")
         court_stub = os.path.join(stubs_dir, f"{cache_stem}_court_keypoints.pkl")
 
     # 4. Configure Models & Hardware Device
@@ -157,17 +172,36 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     if not os.path.exists(player_model_path) and os.path.exists(os.path.basename(player_model_path)):
         player_model_path = os.path.basename(player_model_path)
 
-    # Ball Tracker: custom trained YOLO26 or TF SavedModel/TFLite
-    ball_model_path = models_cfg.get("ball_model", "models/ball_detector_yolo26_best.pt")
+    # Ball Tracker: TrackNet PyTorch / Keras (with optional YOLO Hybrid) or YOLO26 PyTorch
+    if ball_detector_type in ("tracknet", "hybrid"):
+        ball_model_path = models_cfg.get("ball_model_tracknet", "models/tracknet_weights.pth")
+        if not os.path.exists(ball_model_path):
+            for cand in ["models/tracknet_weights.pth", "models/tracknet.pt", "models/tracknet_v4_ball_detector_best.keras"]:
+                if os.path.exists(cand):
+                    ball_model_path = cand
+                    break
+    else:
+        ball_model_path = models_cfg.get("ball_model_yolo", "models/ball_detector_yolo26_best.pt")
+        if not os.path.exists(ball_model_path) and os.path.exists("models/ball_detector_yolo26_best.pt"):
+            ball_model_path = "models/ball_detector_yolo26_best.pt"
+
     if not os.path.exists(ball_model_path):
-        custom_pt = "models/ball_detector_yolo26_best.pt"
-        tf_saved = "models/ball_detector_tf_saved_model"
-        if os.path.exists(custom_pt):
-            ball_model_path = custom_pt
-        elif os.path.exists(tf_saved):
-            ball_model_path = tf_saved
+        generic_ball = models_cfg.get("ball_model")
+        if generic_ball and os.path.exists(generic_ball):
+            ball_model_path = generic_ball
+            if str(ball_model_path).endswith('.keras') or 'tracknet' in str(ball_model_path).lower():
+                ball_detector_type = "hybrid" if ball_detector_type == "hybrid" else "tracknet"
+            else:
+                ball_detector_type = "yolo"
         else:
-            ball_model_path = player_model_path
+            custom_pt = "models/ball_detector_yolo26_best.pt"
+            custom_tracknet = "models/tracknet_weights.pth"
+            if ball_detector_type in ("tracknet", "hybrid") and os.path.exists(custom_tracknet):
+                ball_model_path = custom_tracknet
+            elif os.path.exists(custom_pt):
+                ball_model_path = custom_pt
+            else:
+                ball_model_path = player_model_path
 
     # Court Line Detector: TrackNet-style PyTorch heatmaps
     court_model_path = models_cfg.get("court_model", "models/model_tennis_court_det.pt")
@@ -207,8 +241,16 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     device_display = f"GPU ({torch.cuda.get_device_name(0)})" if device_str == "cuda" else "CPU"
     print(f"[Pipeline] Active device: {device_display} (configured as '{configured_device}')")
 
+    aux_yolo_model = models_cfg.get("ball_model_yolo", "models/ball_detector_yolo26_best.pt")
     player_tracker = PlayerTracker(model_path=player_model_path, load_model=not player_cache, device=device_str)
-    ball_tracker = BallTracker(model_path=ball_model_path, load_model=not ball_cache, device=device_str)
+    ball_tracker = BallTracker(
+        model_path=ball_model_path,
+        model_type=ball_detector_type,
+        load_model=not ball_cache,
+        device=device_str,
+        aux_yolo_path=aux_yolo_model,
+        enable_hybrid=(ball_detector_type == "hybrid")
+    )
     court_line_detector = segment_detector or CourtLineDetector(court_model_path, load_model=not court_cache, device=device)
 
     # 5. Detect Players and Ball
@@ -358,8 +400,9 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
             player_stats_data_df[f'player_{p}_total_player_speed'] / player_stats_data_df[f'player_{opp}_number_of_shots'].replace(0, np.nan)
         ).fillna(0)
 
-    # 9.5 Referee Hawk-Eye ELC Decision Analysis
-    referee_system = RefereeSystem(mini_court=mini_court)
+    # 9.5 Referee Hawk-Eye ELC Decision Analysis (CatBoost Bounce Detection)
+    bounce_model_path = cfg.get("models", {}).get("bounce_model", "models/bounce_model.cbm")
+    referee_system = RefereeSystem(mini_court=mini_court, bounce_model_path=bounce_model_path)
     decision_info = referee_system.evaluate_point_decision(
         ball_shot_frames=ball_shot_frames,
         player_mini_court_detections=player_mini_court_detections,

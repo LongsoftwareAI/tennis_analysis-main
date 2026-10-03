@@ -194,8 +194,15 @@ class MiniCourtDrawer:
 
                     # 4. Floating Measurement Pill Badge
                     margin_val = abs(info.get('margin_cm', 104.5))
-                    tag_prefix = "IN +" if is_winner else "OUT -"
-                    tag_full = f"{tag_prefix}{margin_val:.0f}cm"
+                    dec = info.get('decision', 'IN')
+                    if dec == 'NET':
+                        tag_full = "NET FAULT"
+                        lbl_b1 = "NET (RUC LUOI)"
+                    else:
+                        tag_prefix = "IN +" if is_winner else "OUT -"
+                        tag_full = f"{tag_prefix}{margin_val:.0f}cm"
+                        lbl_b1 = "BOUNCE 1 (IN)" if is_winner else "BOUNCE 1 (OUT)"
+
                     (tw, th), _ = cv2.getTextSize(tag_full, cv2.FONT_HERSHEY_DUPLEX, 0.36, 1)
                     tag_x = int(np.clip(fx + 9, self.geom.start_x + 6, self.geom.end_x - tw - 8))
                     tag_y = int(np.clip(fy - 3, self.geom.start_y + th + 28, self.geom.end_y - 10))
@@ -204,7 +211,6 @@ class MiniCourtDrawer:
                     cv2.putText(frame, tag_full, (tag_x, tag_y), cv2.FONT_HERSHEY_DUPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
 
                     # 5. Label "BOUNCE 1" Pin below mark
-                    lbl_b1 = "BOUNCE 1 (IN)" if is_winner else "BOUNCE 1 (OUT)"
                     b1_y = fy + 16
                     if b1_y < self.geom.end_y - 10:
                         cv2.putText(frame, lbl_b1, (fx - 24, b1_y), cv2.FONT_HERSHEY_SIMPLEX, 0.30, (0, 0, 0), 2, cv2.LINE_AA)
@@ -289,6 +295,9 @@ class MiniCourtDrawer:
                     for i in range(len(trail_pts) - 1):
                         pt_a = trail_pts[i]
                         pt_b = trail_pts[i + 1]
+                        d_mc = float(np.hypot(pt_b[0] - pt_a[0], pt_b[1] - pt_a[1]))
+                        if d_mc > 28.0 or d_mc < 1.0:
+                            continue
                         prog = float(i + 1) / float(len(trail_pts))
                         trail_thick = max(1, int(prog * 3))
                         trail_col = (int(prog * 20), int(200 + prog * 55), int(160 + prog * 95))  # cyan-yellow

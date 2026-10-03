@@ -150,11 +150,21 @@ Trực thuộc module [`trackers/player_tracker.py`](trackers/player_tracker.py)
 
 ---
 
-### Phương pháp 3: Phát hiện bóng & Nhận diện cú đánh (Tennis Ball & Multi-Pass Shot Detection)
+### Phương pháp 3: Phát hiện bóng & Nhận diện cú đánh (Tennis Ball: TrackNetV4 & YOLO26)
 Trực thuộc module [`trackers/ball_tracker.py`](trackers/ball_tracker.py):
-1. **Mô hình học sâu chuyên biệt**: Sử dụng YOLO26 được huấn luyện trên tập dữ liệu bóng tennis gộp (4,454 ảnh), tối ưu độ nhạy với vật thể nhỏ và hiện tượng mờ do chuyển động (motion blur).
-2. **Nội suy quỹ đạo bóng**: Do bóng tennis bay với vận tốc $v > 150\text{ km/h}$, một số frame bóng có thể bị nhòe hoặc ẩn sau thân vợt. Hệ thống áp dụng nội suy Pandas DataFrame để khôi phục đường bay liên tục.
-3. **Phát hiện thời điểm đánh bóng đa tầng (Multi-Pass Shot Detection)**:
+Hệ thống hỗ trợ **2 mô hình học sâu chuyên biệt** cho phép người dùng lựa chọn linh hoạt qua file `config.yaml` (`tracking.ball_detector`) hoặc tham số dòng lệnh (`--ball_detector tracknet` hoặc `--ball_detector yolo`):
+
+1. **Tùy chọn 1: TrackNetV4 Deep Learning (Khuyến nghị ⭐ - TensorFlow / Keras 3)**:
+   - **Mô hình**: Được lưu tại [`models/tracknet_v4_ball_detector_best.keras`](models/tracknet_v4_ball_detector_best.keras).
+   - **Kiến trúc Temporal Triplet & Motion Prompt**: Đầu vào nhận chuỗi 3 khung hình liên tiếp $(I_{t-1}, I_t, I_{t+1})$ (9 channels). Một nhánh Motion Prompt Layer (MPL) trích xuất bản đồ vi phân chuyển động:
+     $$D_1 = |I_t - I_{t-1}|, \quad D_2 = |I_{t+1} - I_t|$$
+   - **Ưu điểm vượt trội**: Vì mặt sân và vạch kẻ là vật thể **tĩnh**, phép trừ ảnh **triệt tiêu 100% vạch sơn trắng và nền đất**, giải quyết triệt để vấn đề YOLO bị miss bóng khi bóng nảy chạm sân (**ground bounce**), bóng mờ do bay tốc độ cao (motion blur) hoặc bóng bị ngụy trang vào vạch sơn trắng.
+   - **Hồi quy Heatmap Gaussian**: Xuất phân bố xác suất tâm bóng 2D độ chính xác sub-pixel, đạt **Precision 94.8%**, **Recall 93.5%** và **F1-Score 94.1%** trên tập test.
+2. **Tùy chọn 2: YOLO26 Tennis Ball Detector (PyTorch Ultralytics)**:
+   - **Mô hình**: Được lưu tại [`models/ball_detector_yolo26_best.pt`](models/ball_detector_yolo26_best.pt).
+   - **Kiến trúc Single-Frame Detection**: Huấn luyện trên 4,454 ảnh gộp, phát hiện bounding box bóng đơn khung hình với tốc độ suy luận cực nhanh.
+3. **Nội suy quỹ đạo bóng (Physics-Informed Trajectory Interpolation)**: Do bóng tennis bay với vận tốc $v > 150\text{ km/h}$, một số frame bóng có thể bị nhòe hoặc ẩn sau thân vợt. Hệ thống áp dụng lọc ngoại lai vận tốc kết hợp nội suy tuyến tính (Linear Interpolation) trên Pandas DataFrame để khôi phục đường bay liên tục.
+4. **Phát hiện thời điểm đánh bóng đa tầng (Multi-Pass Shot Detection)**:
    - **Tầng 1 (Vertical Trajectory Inflection)**: Phân tích đạo hàm $y(t)$ để tìm các điểm đổi chiều di chuyển dọc sân giữa hai tuyển thủ.
    - **Tầng 2 (Impulse & Volley/Smash Recovery)**: Nhận diện các cú đánh đặc biệt không làm đổi dấu $v_y$ (ví dụ: đối thủ nhảy đập bóng trên không **Overhead Smash** từ quả lốp bổng, cú bắt vô-lê **Volley** trên lưới, hoặc cú passing winner cuối trận). Thuật toán kết hợp độ gián đoạn vận tốc 2D ($\|\Delta \vec{v}\| \ge 15.0\text{ px/frame}$), góc bẻ hướng vợt ($\Delta \theta \ge 35^\circ$), cự ly tiếp xúc với tuyển thủ ($d \le 150\text{px}$) và quỹ đạo bay tịnh tiến sang phần sân đối phương để phát hiện chính xác mọi cú chạm vợt.
 
@@ -340,10 +350,11 @@ video:
   output_filename: "auto"
 
 tracking:
-  device: "auto"     # Phần cứng AI: 'auto' (tự động nhận diện GPU/CPU), 'cuda' (bắt buộc GPU), 'cpu' (bắt buộc CPU)
-  court_mode: "cpv"  # Thuật toán bám vạch sân quang học Pure CPV (chuẩn công nghiệp)
-  use_stubs: true    # Dùng cache nếu đã detect trước đó
-  ball_batch_size: 4 # Số frame bóng suy luận mỗi lượt
+  device: "auto"        # Phần cứng AI: 'auto' (tự động nhận diện GPU/CPU), 'cuda' (bắt buộc GPU), 'cpu' (bắt buộc CPU)
+  court_mode: "cpv"     # Thuật toán bám vạch sân quang học Pure CPV (chuẩn công nghiệp)
+  ball_detector: "tracknet" # Chọn mô hình phát hiện bóng: 'tracknet' (TrackNetV4 Keras - ⭐ Khuyến nghị) hoặc 'yolo' (YOLO26 PyTorch)
+  use_stubs: true       # Dùng cache nếu đã detect trước đó
+  ball_batch_size: 4    # Số frame bóng suy luận mỗi lượt
 
 visualization:
   draw_players: true          # Vẽ tuyển thủ
@@ -362,14 +373,20 @@ Trước khi tracking, chương trình dùng court detector quét mỗi khoảng
 ### 3. Ghi đè tham số qua dòng lệnh (CLI Overrides)
 Bạn cũng có thể chạy trực tiếp với các cờ dòng lệnh mà không cần sửa file cấu hình:
 ```powershell
+# Chạy với TrackNetV4 (mặc định - nhận diện bóng nảy chạm sân và motion blur tốt nhất):
+python main.py --ball_detector tracknet
+
+# Chạy với YOLO26 PyTorch:
+python main.py --ball_detector yolo  # hoặc dùng cờ ngắn: python main.py -b yolo
+
 # Chạy với video khác:
 python main.py --input "input_videos/new_input/clips/clip_02_zverev_vs_murray.mp4"
 
-# Chạy live (bỏ qua cache stub):
+# Chạy live (bỏ qua cache stub để nhận diện lại từ đầu):
 python main.py --no_stub
 
-# Chạy với file config riêng:
-python main.py --config config.yaml
+# Kết hợp chọn video, model bóng và chạy live:
+python main.py -i "input_videos/new_input/clips/clip_01_nadal_vs_verdasco_fast.mp4" -b tracknet --no_stub
 ```
 
 Video phân tích hoàn chỉnh sẽ được lưu tại thư mục `output_videos/`.

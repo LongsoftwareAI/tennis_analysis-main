@@ -79,6 +79,7 @@ def print_config_summary(config: Dict[str, Any], overrides: Optional[Dict[str, A
     print(f" [Video]  Input   : {v.get('input_path')}")
     print(f" [Video]  Output  : {v.get('output_dir')} (File: {v.get('output_filename', 'auto')})")
     print(f" [Track]  Court   : {t.get('court_mode', 'cpv').upper()}")
+    print(f" [Track]  Ball Det: {t.get('ball_detector', 'tracknet').upper()}")
     print(f" [Track]  Stubs   : Use={t.get('use_stubs', True)}, ForceLive={t.get('force_live', False)}")
     print(f" [Device] Hardware: {t.get('device', 'auto').upper()}")
     print(f" [Model]  Player  : {m.get('player_model')}")

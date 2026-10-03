@@ -84,35 +84,21 @@ class MiniCourtProjector:
             else:
                 raw_ball_mini_pts.append((np.nan, np.nan))
 
-        df_raw = pd.DataFrame(raw_ball_mini_pts, columns=['x', 'y'], dtype=np.float64).interpolate(method='linear').bfill().ffill()
+        df_raw = pd.DataFrame(raw_ball_mini_pts, columns=['x', 'y'], dtype=np.float64).interpolate(method='linear', limit=4)
         return df_raw
 
-    def _interpolate_court_flight(self, f, t_start, t_end, p_start, p_end, net_y, alpha=0.35):
+    def _interpolate_court_flight(self, f, t_start, t_end, p_start, p_end, net_y=None, alpha=None):
         """
-        Physics-based court flight interpolation:
-        If trajectory crosses the net, aligns the net-crossing timing at tau = 0.38
-        matching physical ball depth traversal and TV broadcast camera view.
+        Real-time synchronous court flight interpolation:
+        Progresses smoothly and linearly from p_start to p_end synchronized 1:1 with frame time,
+        ensuring zero lag and natural motion matching the broadcast video.
         """
         span = max(1, t_end - t_start)
         tau = min(1.0, max(0.0, float(f - t_start) / float(span)))
         xg = p_start[0] + (p_end[0] - p_start[0]) * tau
-
-        if (p_start[1] - net_y) * (p_end[1] - net_y) < 0:
-            tau_net = 0.38
-            f_net = t_start + max(1, int(round(tau_net * span)))
-            if f <= f_net:
-                tau1 = float(f - t_start) / float(max(1, f_net - t_start))
-                t_drag1 = (1.0 - np.exp(-0.30 * tau1)) / (1.0 - np.exp(-0.30))
-                yg = p_start[1] + (net_y - p_start[1]) * t_drag1
-            else:
-                tau2 = float(f - f_net) / float(max(1, t_end - f_net))
-                t_drag2 = (1.0 - np.exp(-0.35 * tau2)) / (1.0 - np.exp(-0.35))
-                yg = net_y + (p_end[1] - net_y) * t_drag2
-        else:
-            tau_drag = (1.0 - np.exp(-alpha * tau)) / (1.0 - np.exp(-alpha))
-            yg = p_start[1] + (p_end[1] - p_start[1]) * tau_drag
-
+        yg = p_start[1] + (p_end[1] - p_start[1]) * tau
         return xg, yg
+
 
     def convert_bounding_boxes_to_mini_court_coordinates(
         self,
@@ -176,8 +162,9 @@ class MiniCourtProjector:
                 if f < shots[0]:
                     # Before serve is struck: ball is with the serving player
                     s0 = shots[0]
-                    bx_raw = float(df_raw['x'].iloc[s0])
-                    by_raw = float(df_raw['y'].iloc[s0])
+                    p1_id = list(df_players.keys())[0] if df_players else 1
+                    bx_raw = float(df_raw['x'].iloc[s0]) if pd.notna(df_raw['x'].iloc[s0]) else float(df_players[p1_id]['x'].iloc[s0])
+                    by_raw = float(df_raw['y'].iloc[s0]) if pd.notna(df_raw['y'].iloc[s0]) else float(df_players[p1_id]['y'].iloc[s0])
                     server_pid = min(df_players.keys(), key=lambda pid: np.hypot(
                         float(df_players[pid]['x'].iloc[s0]) - bx_raw,
                         float(df_players[pid]['y'].iloc[s0]) - by_raw
@@ -201,14 +188,18 @@ class MiniCourtProjector:
                 if seg_idx > 0 and len(final_ball_pts) >= s:
                     start_pos = final_ball_pts[s - 1]
                 else:
-                    start_pos = (float(df_raw['x'].iloc[s]), float(df_raw['y'].iloc[s]))
+                    raw_sx = float(df_raw['x'].iloc[s]) if pd.notna(df_raw['x'].iloc[s]) else (final_ball_pts[s-1][0] if final_ball_pts else min_x)
+                    raw_sy = float(df_raw['y'].iloc[s]) if pd.notna(df_raw['y'].iloc[s]) else (final_ball_pts[s-1][1] if final_ball_pts else min_y)
+                    start_pos = (raw_sx, raw_sy)
                 start_pos = (float(np.clip(start_pos[0], min_x, max_x)), float(np.clip(start_pos[1], min_y, max_y)))
 
                 # Determine bounce frame and position for this shot
                 b_info = bounce_map.get(seg_idx)
                 if b_info is not None:
                     bounce_f = b_info.get('peak_frame', b_info.get('frame', min(e - 2, s + 11)))
-                    target_b = b_info.get('mini_pos', (float(df_raw['x'].iloc[bounce_f]), float(df_raw['y'].iloc[bounce_f])))
+                    b_raw_x = float(df_raw['x'].iloc[bounce_f]) if pd.notna(df_raw['x'].iloc[bounce_f]) else start_pos[0]
+                    b_raw_y = float(df_raw['y'].iloc[bounce_f]) if pd.notna(df_raw['y'].iloc[bounce_f]) else net_y
+                    target_b = b_info.get('mini_pos', (b_raw_x, b_raw_y))
                     target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
 
                     if f <= bounce_f:

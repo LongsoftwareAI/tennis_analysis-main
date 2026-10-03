@@ -9,14 +9,24 @@ class RefereeSystem:
     Evaluates shot landing locations, line margins, IN/OUT determinations,
     and point scoring awards to assist referees and viewers.
     """
-    def __init__(self, mini_court=None):
+    def __init__(self, mini_court=None, bounce_detector=None, bounce_model_path="models/bounce_model.cbm"):
         self.mini_court = mini_court
         self.decision_info = None
         self.all_bounces = []
+        if bounce_detector is not None:
+            self.bounce_detector = bounce_detector
+        else:
+            try:
+                from trackers.bounce_detector import BounceDetector
+                self.bounce_detector = BounceDetector(model_path=bounce_model_path)
+            except Exception as e:
+                print(f"[RefereeSystem] Notice: BounceDetector not loaded ({e}), using kinematic fallback.")
+                self.bounce_detector = None
 
     def detect_all_bounces(self, ball_shot_frames, ball_detections, court_keypoints, mini_court):
         """
-        Detect every ground bounce event across all shots in the rally.
+        Detect every ground bounce event across all shots in the rally using ML (CatBoost)
+        with kinematic fallback.
         """
         bounces = []
         num_frames = len(ball_detections)
@@ -57,98 +67,135 @@ class RefereeSystem:
 
         smooth_ys = pd.Series(cam_ys).rolling(window=3, min_periods=1, center=True).mean().values
 
-        for idx, s in enumerate(ball_shot_frames):
-            is_final = (idx == len(ball_shot_frames) - 1)
-            next_s = ball_shot_frames[idx + 1] if not is_final else num_frames - 1
-            w_start = min(num_frames - 1, s + 5)
-            w_end = min(num_frames - 1, next_s - 3) if not is_final else min(num_frames - 1, s + 35)
-            if w_end <= w_start:
-                continue
+        # Run ML-based CatBoost Bounce Detection
+        ml_bounces = []
+        if self.bounce_detector is not None and self.bounce_detector.is_available():
+            ml_bounces = self.bounce_detector.detect_bounces(ball_detections, min_gap=20, confidence_threshold=0.40)
 
-            # Look for local inflection / bounce point where ball touches court
-            best_bounce_f = None
-            # Determine shot direction using initial velocity vector (independent of camera net Y calibration)
-            f_check = min(num_frames - 1, s + 6)
-            dy_init = smooth_ys[f_check] - smooth_ys[s]
-            moving_to_near = (dy_init > 0)
+        if ml_bounces:
+            for idx, b in enumerate(ml_bounces):
+                f = b['frame']
+                bcx, bcy = b['camera_pos']
+                preceding_shots = [i for i, s in enumerate(ball_shot_frames) if s < f]
+                shot_idx = preceding_shots[-1] if preceding_shots else 0
+                is_final = False
 
-            if not moving_to_near:
-                # Ball moving away towards far court (reaches minimum Y on court before rising)
-                for f in range(w_start, w_end + 1):
-                    if smooth_ys[f] < court_min_y:
-                        continue  # Reject airborne balls high in the sky
-                    if not is_final and (next_s - f <= 2):
-                        continue  # Reject racket contact at next stroke
-                    if 0 < f < num_frames - 1:
-                        if smooth_ys[f] <= smooth_ys[f - 1] and smooth_ys[f] <= smooth_ys[f + 1]:
-                            best_bounce_f = f
-                            break
-                if best_bounce_f is None and is_final:
-                    valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
-                    if valid_fs:
-                        best_bounce_f = valid_fs[int(np.argmin([smooth_ys[f] for f in valid_fs]))]
-            else:
-                # Ball moving towards near court (reaches maximum Y on ground before rebounding up)
-                for f in range(w_start, w_end + 1):
-                    if smooth_ys[f] < court_min_y:
-                        continue
-                    if not is_final and (next_s - f <= 2):
-                        continue
-                    if 0 < f < num_frames - 1:
-                        if smooth_ys[f] >= smooth_ys[f - 1] and smooth_ys[f] >= smooth_ys[f + 1]:
-                            best_bounce_f = f
-                            break
-                if best_bounce_f is None and is_final:
-                    valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
-                    if valid_fs:
-                        best_bounce_f = valid_fs[int(np.argmax([smooth_ys[f] for f in valid_fs]))]
+                try:
+                    if isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > f and hasattr(court_keypoints[f], '__len__'):
+                        kps = court_keypoints[f]
+                    else:
+                        kps = court_keypoints
+                    src_pts = np.array([(kps[2 * j], kps[2 * j + 1]) for j in range(14)], dtype=np.float32)
+                    H, _ = cv2.findHomography(src_pts, dst_pts)
+                    pt = np.array([[[bcx, bcy]]], dtype=np.float32)
+                    proj = cv2.perspectiveTransform(pt, H)[0][0]
+                    mini_x, mini_y = float(proj[0]), float(proj[1])
+                except Exception:
+                    mini_x, mini_y = float(court_left + 20), float(baseline_far + 40)
 
-            if best_bounce_f is None:
-                if is_final:
-                    best_bounce_f = min(num_frames - 1, s + 11)
-                else:
+                is_in = (court_left - 5 <= mini_x <= court_right + 5) and (baseline_far - 5 <= mini_y <= baseline_near + 5)
+                margin_side = min(mini_x - court_left, court_right - mini_x) * px_to_cm
+                margin_base = min(mini_y - baseline_far, baseline_near - mini_y) * px_to_cm
+                min_margin = min(margin_side, margin_base) if is_in else -max(court_left - mini_x, mini_x - court_right, baseline_far - mini_y, mini_y - baseline_near) * px_to_cm
+
+                bounces.append({
+                    'shot_idx': shot_idx,
+                    'is_final': is_final,
+                    'frame': f,
+                    'peak_frame': f,
+                    'camera_pos': (bcx, bcy),
+                    'mini_pos': (mini_x, mini_y),
+                    'is_in': is_in,
+                    'margin_cm': min_margin,
+                    'margin_side_cm': margin_side,
+                    'margin_base_cm': margin_base,
+                    'score': b.get('score', 0.5)
+                })
+        else:
+            # Kinematic fallback if ML model is unavailable or detected no candidate
+            for idx, s in enumerate(ball_shot_frames):
+                is_final = (idx == len(ball_shot_frames) - 1)
+                next_s = ball_shot_frames[idx + 1] if not is_final else num_frames - 1
+                w_start = min(num_frames - 1, s + 4)
+                w_end = min(num_frames - 1, next_s - 2) if not is_final else min(num_frames - 1, s + 50)
+                if w_end <= w_start:
                     continue
 
-            # Physical ground touchdown occurs at the first deceleration frame (1 frame before apex)
-            contact_f = max(s + 3, best_bounce_f - 1) if (best_bounce_f - s > 4) else best_bounce_f
+                best_bounce_f = None
+                f_check = min(num_frames - 1, s + 6)
+                dy_init = smooth_ys[f_check] - smooth_ys[s]
+                moving_to_near = (dy_init > 0)
 
-            bcx = cam_xs[best_bounce_f]
-            bcy = cam_ys[best_bounce_f]
-
-            # Project to mini court
-            try:
-                if isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > 14 and hasattr(court_keypoints[0], '__len__'):
-                    kps = court_keypoints[best_bounce_f]
+                if not moving_to_near:
+                    for f in range(w_start, w_end + 1):
+                        if smooth_ys[f] < court_min_y:
+                            continue
+                        if not is_final and (next_s - f <= 2):
+                            continue
+                        if 0 < f < num_frames - 1:
+                            if smooth_ys[f] <= smooth_ys[f - 1] and smooth_ys[f] <= smooth_ys[f + 1]:
+                                best_bounce_f = f
+                                break
+                    if best_bounce_f is None and is_final:
+                        valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
+                        if valid_fs:
+                            best_bounce_f = valid_fs[int(np.argmin([smooth_ys[f] for f in valid_fs]))]
                 else:
-                    kps = court_keypoints
-                src_pts = np.array([(kps[2 * j], kps[2 * j + 1]) for j in range(14)], dtype=np.float32)
-                H, _ = cv2.findHomography(src_pts, dst_pts)
-                pt = np.array([[[bcx, bcy]]], dtype=np.float32)
-                proj = cv2.perspectiveTransform(pt, H)[0][0]
-                mini_x, mini_y = float(proj[0]), float(proj[1])
-            except Exception:
-                mini_x, mini_y = float(court_left + 20), float(baseline_far + 40)
+                    for f in range(w_start, w_end + 1):
+                        if smooth_ys[f] < court_min_y:
+                            continue
+                        if not is_final and (next_s - f <= 2):
+                            continue
+                        if 0 < f < num_frames - 1:
+                            if smooth_ys[f] >= smooth_ys[f - 1] and smooth_ys[f] >= smooth_ys[f + 1]:
+                                best_bounce_f = f
+                                break
+                    if best_bounce_f is None and is_final:
+                        valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
+                        if valid_fs:
+                            best_bounce_f = valid_fs[int(np.argmax([smooth_ys[f] for f in valid_fs]))]
 
-            is_in = (court_left - 5 <= mini_x <= court_right + 5) and (baseline_far - 5 <= mini_y <= baseline_near + 5)
-            margin_side = min(mini_x - court_left, court_right - mini_x) * px_to_cm
-            margin_base = min(mini_y - baseline_far, baseline_near - mini_y) * px_to_cm
-            min_margin = min(margin_side, margin_base) if is_in else -max(court_left - mini_x, mini_x - court_right, baseline_far - mini_y, mini_y - baseline_near) * px_to_cm
+                if best_bounce_f is None:
+                    continue
 
-            bounces.append({
-                'shot_idx': idx,
-                'is_final': is_final,
-                'frame': contact_f,
-                'peak_frame': best_bounce_f,
-                'camera_pos': (bcx, bcy),
-                'mini_pos': (mini_x, mini_y),
-                'is_in': is_in,
-                'margin_cm': min_margin,
-                'margin_side_cm': margin_side,
-                'margin_base_cm': margin_base
-            })
+                contact_f = best_bounce_f
+                bcx = cam_xs[best_bounce_f]
+                bcy = cam_ys[best_bounce_f]
+
+                try:
+                    if isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > 14 and hasattr(court_keypoints[0], '__len__'):
+                        kps = court_keypoints[best_bounce_f]
+                    else:
+                        kps = court_keypoints
+                    src_pts = np.array([(kps[2 * j], kps[2 * j + 1]) for j in range(14)], dtype=np.float32)
+                    H, _ = cv2.findHomography(src_pts, dst_pts)
+                    pt = np.array([[[bcx, bcy]]], dtype=np.float32)
+                    proj = cv2.perspectiveTransform(pt, H)[0][0]
+                    mini_x, mini_y = float(proj[0]), float(proj[1])
+                except Exception:
+                    mini_x, mini_y = float(court_left + 20), float(baseline_far + 40)
+
+                is_in = (court_left - 5 <= mini_x <= court_right + 5) and (baseline_far - 5 <= mini_y <= baseline_near + 5)
+                margin_side = min(mini_x - court_left, court_right - mini_x) * px_to_cm
+                margin_base = min(mini_y - baseline_far, baseline_near - mini_y) * px_to_cm
+                min_margin = min(margin_side, margin_base) if is_in else -max(court_left - mini_x, mini_x - court_right, baseline_far - mini_y, mini_y - baseline_near) * px_to_cm
+
+                bounces.append({
+                    'shot_idx': idx,
+                    'is_final': is_final,
+                    'frame': contact_f,
+                    'peak_frame': best_bounce_f,
+                    'camera_pos': (bcx, bcy),
+                    'mini_pos': (mini_x, mini_y),
+                    'is_in': is_in,
+                    'margin_cm': min_margin,
+                    'margin_side_cm': margin_side,
+                    'margin_base_cm': margin_base
+                })
 
         self.all_bounces = bounces
         return bounces
+
 
     def evaluate_point_decision(
         self,
@@ -210,63 +257,119 @@ class RefereeSystem:
         court_width_px = mini_court.get_width_of_mini_court()
         px_to_cm = (constants.DOUBLE_LINE_WIDTH / max(1.0, float(court_width_px))) * 100.0
 
-        # 4. Find FIRST BOUNCE of final shot
-        final_bounce = None
-        for b in reversed(self.all_bounces):
-            if b.get('is_final', False):
-                final_bounce = b
-                break
-
-        if final_bounce is None:
-            # Fallback
-            landing_frame = min(num_frames - 1, final_shot_frame + 11)
-            camera_land_pos = (780.3, 322.1)
-            landing_pos_mini = (1690.7, 134.7)
-            is_first_bounce_in = True
-            margin_cm = 128.1
-            nearest_line = "Doubles Sideline" if is_doubles else "Left Singles Sideline (Vach bien trai)"
-        else:
-            landing_frame = final_bounce['frame']
-            camera_land_pos = final_bounce['camera_pos']
-            landing_pos_mini = final_bounce['mini_pos']
-            is_first_bounce_in = final_bounce['is_in']
-            margin_cm = final_bounce['margin_cm']
-            sideline_label = "Doubles Sideline (Bien doi)" if is_doubles else "Left Sideline (Bien trai)"
-            nearest_line = sideline_label if final_bounce['margin_side_cm'] < final_bounce['margin_base_cm'] else "Far Baseline (Cuoi san)"
-
-        lx, ly = float(landing_pos_mini[0]), float(landing_pos_mini[1])
-
-        # 5. Evaluate Point Outcome under Official ITF Tennis Rules:
-        if is_doubles:
-            if is_first_bounce_in:
-                decision = "IN"
-                point_winner = hitter_team
-                verdict_text = f"DIEM CHO TEAM {hitter_team} (P{hitter_id})"
-                reason_text = f"Team {hitter_team} (Player {hitter_id}) an diem Winner trong san"
-                scoring_action = "AN DIEM WINNER (DOUBLES)"
-            else:
-                decision = "OUT"
-                point_winner = receiver_team
-                verdict_text = f"DIEM CHO TEAM {receiver_team}"
-                reason_text = f"Player {hitter_id} (Team {hitter_team}) danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
-                scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
-        else:
-            if is_first_bounce_in:
-                decision = "IN"
-                point_winner = hitter_id
-                verdict_text = f"DIEM CHO PLAYER {hitter_id}"
-                reason_text = f"Player {hitter_id} an diem Winner (Bong cham dat lan 1 trong san)"
-                scoring_action = "AN DIEM WINNER (PASSING SHOT)"
-            else:
-                decision = "OUT"
-                point_winner = receiver_id
-                verdict_text = f"DIEM CHO PLAYER {receiver_id}"
-                reason_text = f"Player {hitter_id} danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
-                scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
-
+        # 4. Find Bounces of the decisive final shot
+        # Under ITF Rules:
+        # A shot is judged solely on Bounce 1 (first landing) on the receiver's court.
+        # If Bounce 1 is IN, and opponent does not return the ball before/at Bounce 2,
+        # it is a WINNER for the hitter.
+        # If Bounce 1 is OUT, it is an ERROR (OUT) for the hitter.
+        # Secondary bounce (Bounce 2) indicates rally completion / dead ball.
         is_near_hitter = (hitter_team == 1)
-        second_bounce_pos = (lx - 20.0, float(court_start_y - 18)) if is_near_hitter else (lx + 20.0, float(court_end_y + 18))
-        second_bounce_frame = min(num_frames - 1, landing_frame + 10)
+        if b_pos is not None:
+            is_near_hitter = (b_pos[1] > net_y)
+        elif p_dict and hitter_id in p_dict:
+            is_near_hitter = (p_dict[hitter_id][1] > net_y)
+
+        post_shot_bounces = [b for b in self.all_bounces if b['frame'] > final_shot_frame]
+
+        # Receiver court boundaries (mini court):
+        # Near court is strictly mini_y > net_y + 10.0
+        # Far court is strictly mini_y < net_y - 10.0
+        if is_near_hitter:
+            receiver_court_bounces = [b for b in post_shot_bounces if b['mini_pos'][1] < net_y - 10.0]
+        else:
+            receiver_court_bounces = [b for b in post_shot_bounces if b['mini_pos'][1] > net_y + 10.0]
+
+        # Check whether the shot failed to cross the net (NET ERROR / RUC LUOI)
+        is_net_error = False
+        if not receiver_court_bounces:
+            # If there are no bounces on receiver's court and subsequent bounces are at the net or hitter's side
+            is_net_error = True
+
+        first_bounce = None
+        second_bounce = None
+
+        # Clear any prior is_final flags
+        for b in self.all_bounces:
+            b['is_final'] = False
+
+        if is_net_error:
+            decision = "NET"
+            point_winner = receiver_team if is_doubles else receiver_id
+            verdict_text = f"DIEM CHO {'TEAM ' + str(receiver_team) if is_doubles else 'PLAYER ' + str(receiver_id)}"
+            reason_text = f"Player {hitter_id} danh bong ruc luoi (Net Error)"
+            scoring_action = "LOI DANH BONG RUC LUOI (NET ERROR)"
+            nearest_line = "Tournament Net (Luoi thi dau)"
+            margin_cm = 0.0
+
+            net_bounce = post_shot_bounces[0] if post_shot_bounces else None
+            if net_bounce is not None:
+                net_bounce['is_final'] = True
+                landing_frame = net_bounce['frame']
+                camera_land_pos = net_bounce['camera_pos']
+                landing_pos_mini = (float(net_bounce['mini_pos'][0]), float(net_y))
+            else:
+                landing_frame = min(num_frames - 1, final_shot_frame + 20)
+                camera_land_pos = (960.0, 450.0)
+                landing_pos_mini = (1760.0, float(net_y))
+
+            is_first_bounce_in = False
+            lx, ly = float(landing_pos_mini[0]), float(landing_pos_mini[1])
+            second_bounce_pos = landing_pos_mini
+            second_bounce_frame = min(num_frames - 1, landing_frame + 15)
+
+        else:
+            first_bounce = receiver_court_bounces[0]
+            subsequent = [b for b in post_shot_bounces if b['frame'] > first_bounce['frame']]
+            if subsequent:
+                second_bounce = subsequent[0]
+
+            first_bounce['is_final'] = True
+            landing_frame = first_bounce['frame']
+            camera_land_pos = first_bounce['camera_pos']
+            landing_pos_mini = first_bounce['mini_pos']
+            is_first_bounce_in = first_bounce['is_in']
+            margin_cm = first_bounce['margin_cm']
+            sideline_label = "Doubles Sideline (Bien doi)" if is_doubles else "Left Sideline (Bien trai)"
+            nearest_line = sideline_label if first_bounce['margin_side_cm'] < first_bounce['margin_base_cm'] else "Far Baseline (Cuoi san)"
+
+            lx, ly = float(landing_pos_mini[0]), float(landing_pos_mini[1])
+
+            # Second bounce position and frame
+            if second_bounce is not None:
+                second_bounce_pos = (float(second_bounce['mini_pos'][0]), float(second_bounce['mini_pos'][1]))
+                second_bounce_frame = second_bounce['frame']
+            else:
+                second_bounce_pos = (lx - 20.0, float(court_start_y - 18)) if is_near_hitter else (lx + 20.0, float(court_end_y + 18))
+                second_bounce_frame = min(num_frames - 1, landing_frame + 20)
+
+            # 5. Evaluate Point Outcome under Official ITF Tennis Rules:
+            if is_doubles:
+                if is_first_bounce_in:
+                    decision = "IN"
+                    point_winner = hitter_team
+                    verdict_text = f"DIEM CHO TEAM {hitter_team} (Winner)"
+                    reason_text = f"Team {hitter_team} (Player {hitter_id}) an diem Winner trong san (+{margin_cm:.1f} cm)"
+                    scoring_action = "AN DIEM WINNER (DOUBLES)"
+                else:
+                    decision = "OUT"
+                    point_winner = receiver_team
+                    verdict_text = f"DIEM CHO TEAM {receiver_team}"
+                    reason_text = f"Player {hitter_id} (Team {hitter_team}) danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
+                    scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
+            else:
+                if is_first_bounce_in:
+                    decision = "IN"
+                    point_winner = hitter_id
+                    verdict_text = f"DIEM CHO PLAYER {hitter_id} (Winner)"
+                    reason_text = f"Player {hitter_id} an diem Winner (Passing shot trong san +{margin_cm:.1f} cm)"
+                    scoring_action = "AN DIEM WINNER (PASSING SHOT)"
+                else:
+                    decision = "OUT"
+                    point_winner = receiver_id
+                    verdict_text = f"DIEM CHO PLAYER {receiver_id}"
+                    reason_text = f"Player {hitter_id} danh bong ra ngoai ({abs(margin_cm):.1f} cm)"
+                    scoring_action = "LOI DANH BONG NGOAI SAN (OUT)"
 
         self.decision_info = {
             'final_shot_frame': final_shot_frame,
@@ -317,7 +420,7 @@ class RefereeSystem:
         hitter_id = info['hitter_id']
         camera_land_pos = info.get('camera_land_pos')
 
-        is_out = (decision == "OUT")
+        is_out = (decision in ("OUT", "NET", "FAULT"))
         theme_color = (35, 35, 235) if is_out else (40, 220, 60) # BGR Red or Green
         theme_glow = (70, 70, 255) if is_out else (80, 240, 100)
 
@@ -335,8 +438,8 @@ class RefereeSystem:
                 if 0 <= age <= 22:
                     bc_x, bc_y = int(bounce['camera_pos'][0]), int(bounce['camera_pos'][1])
                     b_is_in = bounce.get('is_in', True)
-                    b_color = (30, 230, 60) if b_is_in else (30, 30, 230)
-                    b_glow = (80, 255, 120) if b_is_in else (80, 80, 255)
+                    b_color = (30, 230, 60) if (b_is_in and decision != "NET") else (30, 30, 230)
+                    b_glow = (80, 255, 120) if (b_is_in and decision != "NET") else (80, 80, 255)
 
                     # 1. Ground contact flash (first 4 frames)
                     if age <= 4:
@@ -361,7 +464,10 @@ class RefereeSystem:
                         pin_top = bc_y - 36
                         cv2.line(frame, (bc_x, bc_y - 4), (bc_x, pin_top + 14), (255, 255, 255), 1, cv2.LINE_AA)
 
-                        badge_txt = f"BOUNCE 1: IN (+{abs(bounce.get('margin_side_cm', 128)):.0f}cm)" if b_is_in else "OUT"
+                        if decision == "NET":
+                            badge_txt = "NET (RUC LUOI)"
+                        else:
+                            badge_txt = f"BOUNCE 1: IN (+{abs(bounce.get('margin_side_cm', 128)):.0f}cm)" if b_is_in else "OUT"
                         (bw, bh), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
                         bx1 = bc_x - int(bw / 2) - 8
                         bx2 = bc_x + int(bw / 2) + 8
@@ -375,8 +481,11 @@ class RefereeSystem:
             # -----------------------------------------------------------------
             # 2. Hawk-Eye Broadcast Decision Card (Bottom Left Corner)
             # -----------------------------------------------------------------
-            # Display referee VAR card starting from decisive bounce (Frame 362)
-            if f_idx >= max(0, landing_frame - 1):
+            # Display referee VAR card ONLY after the point has finished playing:
+            # During active play, only ground ripples and contact pin/badge are shown.
+            # Once the rally concludes (approx. 20-25 frames after bounce or second bounce), the official VAR card pops up!
+            var_trigger_frame = max(landing_frame + 20, info.get('second_bounce_frame', landing_frame + 20))
+            if f_idx >= var_trigger_frame:
                 card_w, card_h = 675, 305
                 card_x = 35
                 card_y = min(735, max(0, frame.shape[0] - card_h - 35))
@@ -409,10 +518,11 @@ class RefereeSystem:
                 badge_x, badge_y = card_x + 20, card_y + 52
                 cv2.rectangle(frame, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), theme_color, -1)
                 cv2.rectangle(frame, (badge_x, badge_y), (badge_x + badge_w, badge_y + badge_h), (255, 255, 255), 2)
+                badge_offset = 30 if decision == 'NET' else (42 if not is_out else 28)
                 cv2.putText(
                     frame,
                     decision,
-                    (badge_x + (42 if not is_out else 28), badge_y + 35),
+                    (badge_x + badge_offset, badge_y + 35),
                     cv2.FONT_HERSHEY_DUPLEX,
                     1.15,
                     (255, 255, 255),
@@ -425,7 +535,10 @@ class RefereeSystem:
                 cv2.putText(frame, nearest_line[:24], (card_x + 225, card_y + 70), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 2)
 
                 cv2.putText(frame, "Margin:", (card_x + 172, card_y + 94), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 180, 180), 1)
-                margin_str = f"{margin_cm:+.1f} cm ({'Trong san' if not is_out else 'Ngoai san'})"
+                if decision == "NET":
+                    margin_str = "0.0 cm (Ruc luoi)"
+                else:
+                    margin_str = f"{margin_cm:+.1f} cm ({'Trong san' if not is_out else 'Ngoai san'})"
                 cv2.putText(frame, margin_str, (card_x + 242, card_y + 94), cv2.FONT_HERSHEY_SIMPLEX, 0.52, theme_color, 2)
 
                 # Point Award Banner
@@ -444,13 +557,22 @@ class RefereeSystem:
                     2,
                     cv2.LINE_AA
                 )
-                detail_str = f"Passing Shot Winner (Bong dap dat lan 1 trong san)" if not is_out else "Danh bong ra ngoai"
+                if decision == "NET":
+                    detail_str = f"Loi ruc luoi (Player {hitter_id} danh khong qua luoi)"
+                elif not is_out:
+                    detail_str = "Passing Shot Winner (Bong dap dat lan 1 trong san)"
+                else:
+                    detail_str = "Danh bong ra ngoai"
                 cv2.putText(frame, detail_str, (pt_box_x + 10, pt_box_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (220, 240, 255), 1)
 
                 # Supplementary Technical Information
                 cv2.putText(frame, f"Frame cham dat 1: F{landing_frame}  |  Bay: {info['flight_duration_sec']:.2f}s", (card_x + 20, card_y + 205), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 180, 180), 1)
-                cv2.putText(frame, "Luat ITF: Chi can lan 1 trong san -> An diem hop le", (card_x + 20, card_y + 228), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (100, 240, 255), 1)
-                cv2.putText(frame, f"Lan 2: Bong nay ra ngoai san sau lung doi thu", (card_x + 20, card_y + 251), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
+                if decision == "NET":
+                    cv2.putText(frame, "Luat ITF: Danh bong vao luoi khong sang san doi thu -> Mat diem", (card_x + 20, card_y + 228), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (100, 240, 255), 1)
+                    cv2.putText(frame, "Loi khong bat buoc (Unforced Net Error)", (card_x + 20, card_y + 251), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
+                else:
+                    cv2.putText(frame, "Luat ITF: Chi can lan 1 trong san -> An diem hop le", (card_x + 20, card_y + 228), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (100, 240, 255), 1)
+                    cv2.putText(frame, f"Lan 2: Bong nay ra ngoai san sau lung doi thu", (card_x + 20, card_y + 251), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 200, 200), 1)
                 cv2.putText(frame, "Official Electronic Line Calling (ELC) Verified", (card_x + 20, card_y + 276), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 180), 1)
 
                 # -------------------------------------------------------------
@@ -514,28 +636,39 @@ class RefereeSystem:
                     cv2.line(court_patch, (iz_w - 30, 0), (iz_w - 30, iz_h), (220, 220, 220), 2)
                     cv2.putText(court_patch, "CENTER", (iz_w - 65, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 180, 180), 1)
 
-                    # Proportional ball placement across singles court
-                    ratio = min(0.75, max(0.18, abs(margin_cm) / 411.5))
-                    ball_impact_x = int(line_x + ratio * (iz_w - 65))
-                    ball_impact_y = 120
+                    if decision == "NET":
+                        # Draw tournament net line in inset
+                        net_inset_y = 120
+                        cv2.line(court_patch, (line_x, net_inset_y), (iz_w - 30, net_inset_y), (30, 185, 255), 3)
+                        cv2.putText(court_patch, "NET CORD", (line_x + 35, net_inset_y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (30, 195, 255), 1)
+                        ball_impact_x = int((line_x + iz_w - 30) / 2)
+                        ball_impact_y = net_inset_y
+                    else:
+                        ratio = min(0.75, max(0.18, abs(margin_cm) / 411.5))
+                        ball_impact_x = int(line_x + ratio * (iz_w - 65))
+                        ball_impact_y = 120
 
                     # Ball footprint
                     cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (22, 16), 0, 0, 360, (0, 180, 100) if not is_out else (40, 40, 220), -1)
                     cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (18, 12), 0, 0, 360, (20, 240, 245) if not is_out else (80, 80, 255), -1)
                     cv2.ellipse(court_patch, (ball_impact_x, ball_impact_y), (20, 14), 0, 0, 360, (255, 255, 255), 2)
 
-                    # Caliper dimension ruler spanning across court
-                    cv2.line(court_patch, (line_x + 3, ball_impact_y), (ball_impact_x - 14, ball_impact_y), theme_color, 2)
-                    cv2.line(court_patch, (line_x + 3, ball_impact_y - 8), (line_x + 3, ball_impact_y + 8), theme_color, 2)
-                    cv2.line(court_patch, (ball_impact_x - 14, ball_impact_y - 8), (ball_impact_x - 14, ball_impact_y + 8), theme_color, 2)
+                    if decision != "NET":
+                        cv2.line(court_patch, (line_x + 3, ball_impact_y), (ball_impact_x - 14, ball_impact_y), theme_color, 2)
+                        cv2.line(court_patch, (line_x + 3, ball_impact_y - 8), (line_x + 3, ball_impact_y + 8), theme_color, 2)
+                        cv2.line(court_patch, (ball_impact_x - 14, ball_impact_y - 8), (ball_impact_x - 14, ball_impact_y + 8), theme_color, 2)
 
-                    # Clear Winner Badge
-                    badge_lbl = f"+{abs(margin_cm):.1f} cm ({abs(margin_cm)/100:.2f} m)"
+                    # Clear Winner / Net Badge
+                    if decision == "NET":
+                        badge_lbl = "NET CORD COLLISION"
+                        verdict_sub = "NET ERROR (FAULT)"
+                    else:
+                        badge_lbl = f"+{abs(margin_cm):.1f} cm ({abs(margin_cm)/100:.2f} m)"
+                        verdict_sub = "CLEAR WINNER (IN)" if not is_out else "OUT OF BOUNDS"
+
                     cv2.rectangle(court_patch, (line_x + 10, 155), (iz_w - 20, 188), (18, 24, 38), -1)
                     cv2.rectangle(court_patch, (line_x + 10, 155), (iz_w - 20, 188), theme_color, 1)
-                    cv2.putText(court_patch, badge_lbl, (line_x + 18, 177), cv2.FONT_HERSHEY_DUPLEX, 0.46, (255, 255, 255), 1, cv2.LINE_AA)
-
-                    verdict_sub = "CLEAR WINNER (IN)" if not is_out else "OUT OF BOUNDS"
+                    cv2.putText(court_patch, badge_lbl, (line_x + 18, 177), cv2.FONT_HERSHEY_DUPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
                     cv2.putText(court_patch, verdict_sub, (line_x + 14, 212), cv2.FONT_HERSHEY_DUPLEX, 0.40, theme_color, 1, cv2.LINE_AA)
 
                 # Inset border

@@ -17,7 +17,7 @@ video:
   #   - "input_videos/new_input/clips/clip_03_duckworth_vs_hewitt.mp4"    (Pha bóng Duckworth vs Hewitt)
   #   - "input_videos/new_input/clips/clip_04_monfils_rally.mp4"          (Pha rally của Monfils)
   #   - "input_videos/input_video.mp4"                                    (Video mẫu ban đầu)
-  input_path: "input_videos/new_input/clips/clip_01_nadal_vs_verdasco_fast.mp4"
+  input_path: "input_videos/new_input/clips/input_video_1.mp4"
 
   # Thư mục lưu kết quả phân tích
   output_dir: "output_videos"
@@ -42,6 +42,12 @@ tracking:
   # Chuẩn công nghiệp: Bám dính từng pixel, triệt tiêu 100% rung giật và chạy cực nhanh (~150+ FPS).
   court_mode: "cpv"
 
+  # Mô hình phát hiện bóng tennis (Ball Detector Engine):
+  #   - "hybrid":   (Khuyến nghị ⭐⭐ Đột phá mới) Kết hợp TrackNet (xử lý bóng nảy sân, motion blur)
+  #                 cộng hưởng YOLO (bổ sung chính xác các frame khi cầu thủ vụt bóng & bóng bị che khuất).
+  #   - "tracknet": TrackNet PyTorch chuẩn TenniSet sử dụng cụm 3-frame vi phân trừ nền.
+  #   - "yolo":     YOLO26 PyTorch phát hiện bóng đơn khung hình truyền thống.
+  ball_detector: "hybrid"
 
   # Chế độ trận đấu (Match Mode):
   #   - "auto":    (Khuyến nghị ⭐) Tự động phát hiện đánh đơn (2 người: P1 gần, P2 xa)
@@ -66,11 +72,20 @@ models:
   # Model phát hiện người chơi (Player 1, Player 2)
   player_model: "models/yolo26s.pt"
 
-  # Model phát hiện bóng tennis (custom PyTorch YOLO26 chuyên dụng)
-  ball_model: "models/ball_detector_yolo26_best.pt"
+  # Model phát hiện bóng TrackNet PyTorch chuẩn TenniSet (Khuyến nghị cho bóng nảy sân)
+  ball_model_tracknet: "models/tracknet_weights.pth"
+
+  # Model phát hiện bóng YOLO26 PyTorch
+  ball_model_yolo: "models/ball_detector_yolo26_best.pt"
+
+  # Model phát hiện bóng mặc định (tự động kích hoạt theo ball_detector ở trên)
+  ball_model: "models/tracknet_weights.pth"
 
   # TrackNet heatmap model phát hiện 14 điểm mốc vạch sân tennis
   court_model: "models/model_tennis_court_det.pt"
+
+  # Mô hình phát hiện điểm bóng chạm đất (Bounce Detector) bằng CatBoost
+  bounce_model: "models/bounce_model.cbm"
 
 # ------------------------------------------------------------------------------
 # 4. TÙY CHỌN HIỂN THỊ TRÊN VIDEO (VISUALIZATION)
