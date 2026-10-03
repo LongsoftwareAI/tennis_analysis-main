@@ -206,8 +206,12 @@ class BallTracker:
         Detect frames where a shot occurred based on vertical trajectory inflection.
         Also detects unclosed final return shots near the end of a rally using player proximity.
         """
+        if any(not b.get(1) for b in ball_positions):
+            ball_positions = self.interpolate_ball_positions(ball_positions)
+
         ball_positions_list = [x.get(1, []) for x in ball_positions]
         df_ball_positions = pd.DataFrame(ball_positions_list, columns=['x1', 'y1', 'x2', 'y2'])
+        df_ball_positions = df_ball_positions.interpolate(limit=4)
 
         df_ball_positions['ball_hit'] = 0
         df_ball_positions['mid_y'] = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2
@@ -244,6 +248,21 @@ class BallTracker:
                                     min_p_dist = dist
                     # If ball is far away from all players, it is an airborne apex or flight turning point, not a shot
                     if min_p_dist > 250.0:
+                        continue
+
+                # Active post-shot motion check: a true shot travels rapidly across the court.
+                # If subsequent positions remain essentially stationary (span < 18px or mean speed < 3.5 px/f), ball is dead or slow pre-serve bounce.
+                subsequent_pts = [
+                    (df_ball_positions['mid_x'].iloc[f_chk], df_ball_positions['mid_y'].iloc[f_chk])
+                    for f_chk in range(i + 3, min(len(df_ball_positions), i + 12))
+                    if pd.notna(df_ball_positions['mid_x'].iloc[f_chk]) and pd.notna(df_ball_positions['mid_y'].iloc[f_chk])
+                ]
+                if len(subsequent_pts) >= 4:
+                    sub_xs = [pt[0] for pt in subsequent_pts]
+                    sub_ys = [pt[1] for pt in subsequent_pts]
+                    speeds = [np.hypot(subsequent_pts[k+1][0] - subsequent_pts[k][0], subsequent_pts[k+1][1] - subsequent_pts[k][1]) for k in range(len(subsequent_pts) - 1)]
+                    mean_spd = np.mean(speeds) if speeds else 0.0
+                    if (max(sub_xs) - min(sub_xs) < 18.0 and max(sub_ys) - min(sub_ys) < 18.0) or mean_spd < 3.5:
                         continue
 
                 # Flight direction check: a real hit must travel across the net towards opponent's court
@@ -351,6 +370,20 @@ class BallTracker:
                             impulse = 30.0
 
                 if is_hit:
+                    # Active motion check in Pass 2: reject dead ball or stationary points
+                    subsequent_pts = [
+                        (df_ball_positions['mid_x'].iloc[f_chk], df_ball_positions['mid_y'].iloc[f_chk])
+                        for f_chk in range(i + 3, min(len(df_ball_positions), i + 12))
+                        if pd.notna(df_ball_positions['mid_x'].iloc[f_chk]) and pd.notna(df_ball_positions['mid_y'].iloc[f_chk])
+                    ]
+                    if len(subsequent_pts) >= 4:
+                        sub_xs = [pt[0] for pt in subsequent_pts]
+                        sub_ys = [pt[1] for pt in subsequent_pts]
+                        speeds = [np.hypot(subsequent_pts[k+1][0] - subsequent_pts[k][0], subsequent_pts[k+1][1] - subsequent_pts[k][1]) for k in range(len(subsequent_pts) - 1)]
+                        mean_spd = np.mean(speeds) if speeds else 0.0
+                        if (max(sub_xs) - min(sub_xs) < 18.0 and max(sub_ys) - min(sub_ys) < 18.0) or mean_spd < 3.5:
+                            continue
+
                     subsequent_ys = [df_ball_positions['mid_y'].iloc[f_chk] for f_chk in range(i + 4, min(len(df_ball_positions), i + 25)) if pd.notna(df_ball_positions['mid_y'].iloc[f_chk])]
                     if subsequent_ys:
                         dy_dir = np.mean(subsequent_ys) - by

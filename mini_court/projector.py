@@ -150,11 +150,13 @@ class MiniCourtProjector:
             final_ball_pts = []
             net_y = (self.geom.court_start_y + self.geom.court_end_y) / 2.0
 
-            # Map detected bounces by shot index if provided
+            # Map detected bounces by shot index: store the earliest/first bounce for each shot
             bounce_map = {}
             if all_bounces:
                 for b in all_bounces:
-                    bounce_map[b['shot_idx']] = b
+                    s_idx = b['shot_idx']
+                    if s_idx not in bounce_map or b['frame'] < bounce_map[s_idx]['frame']:
+                        bounce_map[s_idx] = b
 
             alpha = 0.35
 
@@ -193,21 +195,69 @@ class MiniCourtProjector:
                     start_pos = (raw_sx, raw_sy)
                 start_pos = (float(np.clip(start_pos[0], min_x, max_x)), float(np.clip(start_pos[1], min_y, max_y)))
 
-                # Determine bounce frame and position for this shot
-                b_info = bounce_map.get(seg_idx)
-                if b_info is not None:
-                    bounce_f = b_info.get('peak_frame', b_info.get('frame', min(e - 2, s + 11)))
-                    b_raw_x = float(df_raw['x'].iloc[bounce_f]) if pd.notna(df_raw['x'].iloc[bounce_f]) else start_pos[0]
-                    b_raw_y = float(df_raw['y'].iloc[bounce_f]) if pd.notna(df_raw['y'].iloc[bounce_f]) else net_y
-                    target_b = b_info.get('mini_pos', (b_raw_x, b_raw_y))
+                if is_final and decision_info is not None:
+                    bounce_f = decision_info.get('landing_frame', decision_info.get('bounce_frame', min(e - 2, s + 11)))
+                    target_b = decision_info.get('landing_pos_mini', decision_info.get('first_bounce_pos'))
+                    if target_b is None:
+                        b_info = bounce_map.get(seg_idx)
+                        target_b = b_info.get('mini_pos', (start_pos[0], net_y)) if b_info else (start_pos[0], net_y)
                     target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
 
-                    if f <= bounce_f:
-                        # Flight towards ground bounce
-                        xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
+                    rebound_f = decision_info.get('second_bounce_frame', min(num_frames - 1, bounce_f + 15))
+                    rebound_target = decision_info.get('second_bounce_pos')
+                    if rebound_target is None:
+                        y_reb = (self.geom.court_start_y - 12) if target_b[1] < start_pos[1] else (self.geom.court_end_y + 12)
+                        x_reb = target_b[0] + (target_b[0] - start_pos[0]) * 0.25
+                        rebound_target = (float(np.clip(x_reb, min_x, max_x)), float(y_reb))
                     else:
-                        # Post-bounce rebound
-                        if not is_final:
+                        rebound_target = (float(np.clip(rebound_target[0], min_x, max_x)), float(np.clip(rebound_target[1], min_y, max_y)))
+
+                    if f <= bounce_f:
+                        # Flight from striker to ground bounce / landing point
+                        xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
+                    elif f <= rebound_f:
+                        # Rebound from first bounce to second bounce
+                        tau2 = float(f - bounce_f) / float(max(1, rebound_f - bounce_f))
+                        xg = target_b[0] + (rebound_target[0] - target_b[0]) * tau2
+                        yg = target_b[1] + (rebound_target[1] - target_b[1]) * tau2
+                    else:
+                        # Dead ball at rest after second bounce
+                        xg = rebound_target[0]
+                        yg = rebound_target[1]
+
+                elif is_final and decision_info is None:
+                    # Before referee runs: project ball smoothly into opponent court
+                    b_info = bounce_map.get(seg_idx)
+                    if b_info is not None:
+                        bounce_f = b_info.get('peak_frame', b_info.get('frame', min(e - 2, s + 11)))
+                        target_b = b_info.get('mini_pos', (start_pos[0], net_y))
+                        target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
+                        if f <= bounce_f:
+                            xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
+                        else:
+                            rebound_f = min(num_frames - 1, bounce_f + 14)
+                            y_reb = (self.geom.court_start_y - 12) if target_b[1] < start_pos[1] else (self.geom.court_end_y + 12)
+                            x_reb = target_b[0] + (target_b[0] - start_pos[0]) * 0.25
+                            rebound_target = (float(np.clip(x_reb, min_x, max_x)), float(y_reb))
+                            tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, rebound_f - bounce_f))))
+                            xg = target_b[0] + (rebound_target[0] - target_b[0]) * tau2
+                            yg = target_b[1] + (rebound_target[1] - target_b[1]) * tau2
+                    else:
+                        target_y = (self.geom.court_start_y + 40) if start_pos[1] > net_y else (self.geom.court_end_y - 40)
+                        target_pos = (start_pos[0], target_y)
+                        xg, yg = self._interpolate_court_flight(f, s, e, start_pos, target_pos, net_y, alpha)
+
+                else:
+                    # Rally shot (not final):
+                    b_info = bounce_map.get(seg_idx)
+                    if b_info is not None:
+                        bounce_f = b_info.get('peak_frame', b_info.get('frame', min(e - 2, s + 11)))
+                        target_b = b_info.get('mini_pos', (start_pos[0], net_y))
+                        target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
+
+                        if f <= bounce_f:
+                            xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
+                        else:
                             # Rebound directly towards the receiving player on the other side of net
                             opponents = [pid for pid in df_players if (df_players[pid]['y'].iloc[e] - net_y) * (start_pos[1] - net_y) < 0]
                             if not opponents:
@@ -222,48 +272,19 @@ class MiniCourtProjector:
                             tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, e - bounce_f))))
                             xg = target_b[0] + (e_pos[0] - target_b[0]) * tau2
                             yg = target_b[1] + (e_pos[1] - target_b[1]) * tau2
-                        else:
-                            if decision_info is not None:
-                                rebound_f = decision_info.get('second_bounce_frame', min(num_frames - 1, bounce_f + 11))
-                                rebound_target = decision_info.get('second_bounce_pos', (target_b[0], float(self.geom.court_start_y - 18 if target_b[1] < start_pos[1] else self.geom.court_end_y + 18)))
-                            else:
-                                rebound_f = min(num_frames - 1, bounce_f + 12)
-                                y_reb = (self.geom.court_start_y - 18) if target_b[1] < start_pos[1] else (self.geom.court_end_y + 18)
-                                x_reb = target_b[0] + (target_b[0] - start_pos[0]) * 0.25
-                                rebound_target = (float(np.clip(x_reb, min_x, max_x)), float(y_reb))
-
-                            tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, rebound_f - bounce_f))))
-                            xg = target_b[0] + (rebound_target[0] - target_b[0]) * tau2
-                            yg = target_b[1] + (rebound_target[1] - target_b[1]) * tau2
-
-                elif is_final and decision_info is not None:
-                    bounce_f = decision_info.get('landing_frame', decision_info.get('bounce_frame', min(e - 2, s + 11)))
-                    target_b = decision_info.get('landing_pos_mini', decision_info.get('first_bounce_pos', (float(df_raw['x'].iloc[bounce_f]), float(df_raw['y'].iloc[bounce_f]))))
-                    target_b = (float(np.clip(target_b[0], min_x, max_x)), float(np.clip(target_b[1], min_y, max_y)))
-
-                    if f <= bounce_f:
-                        xg, yg = self._interpolate_court_flight(f, s, bounce_f, start_pos, target_b, net_y, alpha)
                     else:
-                        rebound_f = decision_info.get('second_bounce_frame', min(num_frames - 1, bounce_f + 11))
-                        rebound_target = decision_info.get('second_bounce_pos', (target_b[0], float(self.geom.court_start_y - 18 if target_b[1] < start_pos[1] else self.geom.court_end_y + 18)))
-                        tau2 = min(1.0, max(0.0, float(f - bounce_f) / float(max(1, rebound_f - bounce_f))))
-                        xg = target_b[0] + (rebound_target[0] - target_b[0]) * tau2
-                        yg = target_b[1] + (rebound_target[1] - target_b[1]) * tau2
+                        # Shot without ground bounce (Volley / Overhead Smash hit out of the air)
+                        opponents = [pid for pid in df_players if (df_players[pid]['y'].iloc[e] - net_y) * (start_pos[1] - net_y) < 0]
+                        if not opponents:
+                            opponents = list(df_players.keys())
+                        receiver_pid = min(opponents, key=lambda pid: np.hypot(
+                            float(df_players[pid]['x'].iloc[e]) - start_pos[0],
+                            float(df_players[pid]['y'].iloc[e]) - start_pos[1]
+                        ))
+                        receiver_pos = (float(df_players[receiver_pid]['x'].iloc[e]), float(df_players[receiver_pid]['y'].iloc[e]))
+                        e_pos = (float(np.clip(receiver_pos[0], min_x, max_x)), float(np.clip(receiver_pos[1], min_y, max_y)))
 
-                else:
-                    # Shot without ground bounce (Volley / Overhead Smash hit out of the air)
-                    # Ball travels smoothly from striker (start_pos) across the net directly to receiver (e_pos)
-                    opponents = [pid for pid in df_players if (df_players[pid]['y'].iloc[e] - net_y) * (start_pos[1] - net_y) < 0]
-                    if not opponents:
-                        opponents = list(df_players.keys())
-                    receiver_pid = min(opponents, key=lambda pid: np.hypot(
-                        float(df_players[pid]['x'].iloc[e]) - start_pos[0],
-                        float(df_players[pid]['y'].iloc[e]) - start_pos[1]
-                    ))
-                    receiver_pos = (float(df_players[receiver_pid]['x'].iloc[e]), float(df_players[receiver_pid]['y'].iloc[e]))
-                    e_pos = (float(np.clip(receiver_pos[0], min_x, max_x)), float(np.clip(receiver_pos[1], min_y, max_y)))
-
-                    xg, yg = self._interpolate_court_flight(f, s, e, start_pos, e_pos, net_y, alpha)
+                        xg, yg = self._interpolate_court_flight(f, s, e, start_pos, e_pos, net_y, alpha)
 
                 final_ball_pts.append((float(np.clip(xg, min_x, max_x)), float(np.clip(yg, min_y, max_y))))
 
@@ -294,7 +315,7 @@ class MiniCourtProjector:
             end_f = 999999
             if decision_info is not None:
                 end_f = decision_info.get('second_bounce_frame', decision_info.get('bounce_frame', decision_info.get('out_frame', 999999)))
-            if (decision_info is not None) and (i >= end_f + 2):
+            if (decision_info is not None) and (i >= end_f + 12):
                 output_ball_boxes.append({})
             else:
                 row = df_final.iloc[i]
