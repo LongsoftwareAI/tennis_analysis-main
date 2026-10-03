@@ -3,19 +3,20 @@ import cv2
 import pickle
 import numpy as np
 import pandas as pd
-import tensorflow as tf
 from utils import measure_distance, get_center_of_bbox
 
 class PlayerTracker:
     """
     Tennis Player Tracker supporting TensorFlow models and YOLO26 tracking.
     """
-    def __init__(self, model_path='yolo26s.pt'):
+    def __init__(self, model_path='yolo26s.pt', load_model=True, device=None):
         self.model_path = model_path
+        self.device = device
         self.backend = None
         self.model = None
 
-        self._load_model(model_path)
+        if load_model:
+            self._load_model(model_path)
 
     def _load_model(self, model_path):
         if not model_path:
@@ -32,6 +33,8 @@ class PlayerTracker:
             os.path.exists(os.path.join(model_path, "saved_model.pb")) or
             os.path.exists(os.path.join(model_path, "fingerprint.pb"))
         ):
+            import tensorflow as tf
+            self.tf = tf
             self.backend = 'tf_saved_model'
             self.tf_model = tf.saved_model.load(model_path)
             self.infer_fn = self.tf_model.signatures["serving_default"]
@@ -338,7 +341,10 @@ class PlayerTracker:
         player_dict = {}
 
         if self.backend == 'ultralytics' and self.model is not None:
-            results = self.model.track(frame, persist=True, verbose=False)[0]
+            track_kwargs = {'persist': True, 'verbose': False}
+            if self.device is not None:
+                track_kwargs['device'] = self.device
+            results = self.model.track(frame, **track_kwargs)[0]
             id_name_dict = results.names
 
             for box in results.boxes:
@@ -357,7 +363,7 @@ class PlayerTracker:
             h, w = frame.shape[:2]
             img_resized = cv2.resize(frame, (640, 640))
             img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
-            input_tensor = tf.convert_to_tensor(img_rgb[np.newaxis, ...], dtype=tf.float32) / 255.0
+            input_tensor = self.tf.convert_to_tensor(img_rgb[np.newaxis, ...], dtype=self.tf.float32) / 255.0
 
             outputs = self.infer_fn(input_tensor)
             output_tensor = list(outputs.values())[0].numpy()

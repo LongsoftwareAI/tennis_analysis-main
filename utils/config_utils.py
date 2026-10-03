@@ -9,15 +9,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "output_filename": "auto",  # 'auto' generates <video_stem>_analysis.avi
     },
     "tracking": {
+        "device": "auto",          # 'auto', 'cuda', or 'cpu'
         "court_mode": "cpv",       # 'cpv' (recommended), 'dynamic', or 'static'
         "use_stubs": True,         # Load detection cache from stubs if available
         "force_live": False,       # Force live detection even if stubs exist
         "stubs_dir": "tracker_stubs",
+        "ball_batch_size": 4,
     },
     "models": {
         "player_model": "models/yolo26s.pt",
         "ball_model": "models/ball_detector_yolo26_best.pt",
-        "court_model": "models/keypoints_model.keras",
+        "court_model": "models/model_tennis_court_det.pt",
     },
     "visualization": {
         "draw_players": True,
@@ -78,6 +80,7 @@ def print_config_summary(config: Dict[str, Any], overrides: Optional[Dict[str, A
     print(f" [Video]  Output  : {v.get('output_dir')} (File: {v.get('output_filename', 'auto')})")
     print(f" [Track]  Court   : {t.get('court_mode', 'cpv').upper()}")
     print(f" [Track]  Stubs   : Use={t.get('use_stubs', True)}, ForceLive={t.get('force_live', False)}")
+    print(f" [Device] Hardware: {t.get('device', 'auto').upper()}")
     print(f" [Model]  Player  : {m.get('player_model')}")
     print(f" [Model]  Ball    : {m.get('ball_model')}")
     print(f" [Model]  Court   : {m.get('court_model')}")

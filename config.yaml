@@ -23,16 +23,22 @@ video:
   output_dir: "output_videos"
 
   # Tên file video xuất ra.
-  # "auto": Tự động đặt tên theo cấu trúc <tên_video>_analysis.avi
-  # Hoặc bạn có thể tự đặt tên cụ thể: "my_result.avi"
+  # "auto": Tự động đặt tên theo cấu trúc <tên_video>_analysis.mp4
+  # Hoặc bạn có thể tự đặt tên cụ thể: "my_result.mp4"
   output_filename: "auto"
 
 # ------------------------------------------------------------------------------
 # 2. CẤU HÌNH THEO DÕI VÀ THUẬT TOÁN (TRACKING & ALGORITHMS)
 # ------------------------------------------------------------------------------
 tracking:
+  # Thiết bị phần cứng xử lý AI (Hardware Acceleration):
+  #   - "auto": Tự động sử dụng GPU CUDA nếu khả dụng, nếu không sẽ chuyển sang CPU.
+  #   - "cuda": Bắt buộc sử dụng GPU NVIDIA (CUDA).
+  #   - "cpu":  Bắt buộc sử dụng CPU (thích hợp cho máy không có GPU rời).
+  device: "auto"
+
   # Chế độ bám vạch sân (Court Line Tracking Mode):
-  # Sử dụng Pure CPV Lucas-Kanade Optical Flow + RANSAC (Khởi tạo bởi AI ResNet50 tại Frame 0).
+  # Pure CPV Lucas-Kanade + RANSAC, khởi tạo bởi TrackNet heatmap ở frame 0.
   # Chuẩn công nghiệp: Bám dính từng pixel, triệt tiêu 100% rung giật và chạy cực nhanh (~150+ FPS).
   court_mode: "cpv"
 
@@ -51,6 +57,7 @@ tracking:
   use_stubs: true
   force_live: false
   stubs_dir: "tracker_stubs"
+  ball_batch_size: 4  # Số frame bóng suy luận mỗi lượt; giảm nếu GPU thiếu bộ nhớ
 
 # ------------------------------------------------------------------------------
 # 3. ĐƯỜNG DẪN CÁC MÔ HÌNH HỌC SÂU (MODELS)
@@ -62,8 +69,8 @@ models:
   # Model phát hiện bóng tennis (custom PyTorch YOLO26 chuyên dụng)
   ball_model: "models/ball_detector_yolo26_best.pt"
 
-  # Model phát hiện 14 điểm mốc vạch sân tennis (ResNet50 TensorFlow/Keras)
-  court_model: "models/keypoints_model.keras"
+  # TrackNet heatmap model phát hiện 14 điểm mốc vạch sân tennis
+  court_model: "models/model_tennis_court_det.pt"
 
 # ------------------------------------------------------------------------------
 # 4. TÙY CHỌN HIỂN THỊ TRÊN VIDEO (VISUALIZATION)

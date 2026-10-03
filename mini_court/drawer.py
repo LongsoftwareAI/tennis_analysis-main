@@ -258,7 +258,8 @@ class MiniCourtDrawer:
 
         return frame
 
-    def draw_points_on_mini_court(self, frames, positions, color=(0, 255, 0)):
+    def draw_points_on_mini_court(self, frames, positions, color=(0, 255, 0),
+                                  start_frame=0, ball_history=None):
         """
         Draw players and ball on mini-court with advanced visual styling:
         - Ball (color==(0,255,255)): Dynamic fading trajectory tail ribbon and 3D tennis ball.
@@ -269,12 +270,14 @@ class MiniCourtDrawer:
         if is_ball:
             # Gather valid ball positions across all frames for trailing
             ball_pts_history = []
-            for f_idx in range(len(frames)):
-                pos_dict = positions[f_idx] if f_idx < len(positions) else {}
+            source_positions = ball_history if ball_history is not None else positions
+            for f_idx in range(len(source_positions)):
+                pos_dict = source_positions[f_idx]
                 b_pos = pos_dict.get(1, None)
                 ball_pts_history.append(b_pos)
 
-            for frame_num, frame in enumerate(frames):
+            for local_idx, frame in enumerate(frames):
+                frame_num = start_frame + local_idx
                 # 1. Draw smooth fading motion ribbon (last 8 frames)
                 trail_pts = []
                 for past_f in range(max(0, frame_num - 8), frame_num + 1):
@@ -326,10 +329,11 @@ class MiniCourtDrawer:
 
         return frames
 
-    def draw_mini_court(self, frames, all_bounces=None, decision_info=None):
+    def draw_mini_court(self, frames, all_bounces=None, decision_info=None, start_frame=0):
         """Draw complete mini court overlay onto all video frames."""
         output_frames = []
-        for frame_num, frame in enumerate(frames):
+        for local_idx, frame in enumerate(frames):
+            frame_num = start_frame + local_idx
             frame = self.draw_background_rectangle(frame)
             frame = self.draw_court(frame)
             frame = self.draw_bounce_impacts(frame, frame_num, all_bounces=all_bounces, decision_info=decision_info)
