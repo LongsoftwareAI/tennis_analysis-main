@@ -188,7 +188,15 @@ class MiniCourtProjector:
 
                 # Continuous stroke position: seamless transition from previous frame
                 if seg_idx > 0 and len(final_ball_pts) >= s:
-                    start_pos = final_ball_pts[s - 1]
+                    prev_pos = final_ball_pts[s - 1]
+                    raw_sx = float(df_raw['x'].iloc[s]) if pd.notna(df_raw['x'].iloc[s]) else prev_pos[0]
+                    raw_sy = float(df_raw['y'].iloc[s]) if pd.notna(df_raw['y'].iloc[s]) else prev_pos[1]
+                    # If raw projection indicates ball was struck on the opposite side of net than prev_pos,
+                    # trust the raw stroke position to avoid starting the stroke on the wrong side of the court
+                    if pd.notna(df_raw['y'].iloc[s]) and ((raw_sy - net_y) * (prev_pos[1] - net_y) < 0):
+                        start_pos = (raw_sx, raw_sy)
+                    else:
+                        start_pos = prev_pos
                 else:
                     raw_sx = float(df_raw['x'].iloc[s]) if pd.notna(df_raw['x'].iloc[s]) else (final_ball_pts[s-1][0] if final_ball_pts else min_x)
                     raw_sy = float(df_raw['y'].iloc[s]) if pd.notna(df_raw['y'].iloc[s]) else (final_ball_pts[s-1][1] if final_ball_pts else min_y)

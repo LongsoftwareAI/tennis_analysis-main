@@ -237,12 +237,40 @@ class RefereeSystem:
         p_dict = player_mini_court_detections[final_shot_frame] if final_shot_frame < len(player_mini_court_detections) else {}
         b_pos = ball_mini_court_detections[final_shot_frame].get(1, None) if final_shot_frame < len(ball_mini_court_detections) else None
 
-        if p_dict and b_pos is not None:
+        # Determine physical court side of the ball at stroke initiation directly from camera coordinates
+        b_cam_box = ball_detections[final_shot_frame].get(1, []) if final_shot_frame < len(ball_detections) else []
+        k_shot = court_keypoints[final_shot_frame] if (isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > final_shot_frame and hasattr(court_keypoints[final_shot_frame], '__len__')) else (court_keypoints[0] if (isinstance(court_keypoints, (list, np.ndarray)) and len(court_keypoints) > 0 and hasattr(court_keypoints[0], '__len__')) else court_keypoints)
+        try:
+            net_cam_y = (float(k_shot[2 * 8 + 1]) + float(k_shot[2 * 10 + 1])) / 2.0 if len(k_shot) >= 22 else 450.0
+        except Exception:
+            net_cam_y = 450.0
+
+        is_near_hitter = None
+        if len(b_cam_box) == 4 and not np.isnan(b_cam_box[0]):
+            b_cam_cy = (b_cam_box[1] + b_cam_box[3]) / 2.0
+            is_near_hitter = (b_cam_cy > net_cam_y)
+
+        if is_near_hitter is not None:
+            # Physical camera ground truth overrides: find player matching that side of the court
+            if p_dict:
+                side_players = [pid for pid in p_dict.keys() if (p_dict[pid][1] > net_y) == is_near_hitter]
+                if side_players and b_pos is not None:
+                    hitter_id = min(side_players, key=lambda pid: np.hypot(b_pos[0] - p_dict[pid][0], b_pos[1] - p_dict[pid][1]))
+                elif side_players:
+                    hitter_id = side_players[0]
+                else:
+                    hitter_id = 1 if is_near_hitter else 2
+            else:
+                hitter_id = 1 if is_near_hitter else 2
+        elif p_dict and b_pos is not None:
             # Pick closest player among active players
             hitter_id = min(p_dict.keys(), key=lambda pid: np.hypot(b_pos[0] - p_dict[pid][0], b_pos[1] - p_dict[pid][1]))
+            is_near_hitter = (p_dict[hitter_id][1] > net_y)
         elif b_pos is not None:
-            hitter_id = 1 if b_pos[1] > net_y else 2
+            is_near_hitter = (b_pos[1] > net_y)
+            hitter_id = 1 if is_near_hitter else 2
         else:
+            is_near_hitter = True
             hitter_id = 1
 
         hitter_team = 1 if (hitter_id % 2 == 1) else 2
@@ -264,11 +292,6 @@ class RefereeSystem:
         # it is a WINNER for the hitter.
         # If Bounce 1 is OUT, it is an ERROR (OUT) for the hitter.
         # Secondary bounce (Bounce 2) indicates rally completion / dead ball.
-        is_near_hitter = (hitter_team == 1)
-        if b_pos is not None:
-            is_near_hitter = (b_pos[1] > net_y)
-        elif p_dict and hitter_id in p_dict:
-            is_near_hitter = (p_dict[hitter_id][1] > net_y)
 
         post_shot_bounces = [b for b in self.all_bounces if b['frame'] > final_shot_frame]
 

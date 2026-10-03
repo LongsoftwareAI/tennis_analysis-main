@@ -14,6 +14,7 @@ class PlayerTracker:
         self.device = device
         self.backend = None
         self.model = None
+        self.racket_track_counts = {}
 
         if load_model:
             self._load_model(model_path)
@@ -78,14 +79,16 @@ class PlayerTracker:
             net_y = (float(ref_kps[2 * 8 + 1]) + float(ref_kps[2 * 10 + 1])) / 2.0
 
             # Vertical depth bounds: players can run behind far baseline or near baseline
-            y_min = y_far - 0.35 * court_h
+            # Far baseline margin: 0.16 * court_h (rejects spectators/linesmen standing at back wall)
+            # Near baseline margin: 0.35 * court_h (players running wide towards broadcast camera)
+            y_min = y_far - 0.16 * court_h
             y_max = y_near + 0.35 * court_h
 
             def is_inside_playing_perimeter(cx, cy):
                 if cy < y_min or cy > y_max:
                     return False
                 # Perspective interpolation factor along court depth
-                alpha = np.clip((cy - y_far) / court_h, -0.35, 1.35)
+                alpha = np.clip((cy - y_far) / court_h, -0.16, 1.35)
                 x_left = x0 + alpha * (x2 - x0)
                 x_right = x1 + alpha * (x3 - x1)
                 court_w = max(10.0, x_right - x_left)
@@ -132,9 +135,15 @@ class PlayerTracker:
             dy = float(max(stats['ys']) - min(stats['ys']))
 
             # Real tennis player moves across court; stationary noise is heavily penalized
-            activity_mult = (1.0 + min(path_len / 150.0, 4.0))
-            if dx < 30.0 and dy < 20.0:
-                activity_mult *= 0.15  # Heavy penalty for stationary judge / ball boy
+            mobility = (dx / 300.0) * (path_len / 500.0)
+            activity_mult = (1.0 + min(mobility, 10.0))
+            if dx < 40.0 and dy < 25.0:
+                activity_mult *= 0.10  # Heavy penalty for stationary judge / ball boy
+
+            # Semantic racket carrier bonus: players holding tennis rackets receive massive boost
+            racket_hits = getattr(self, 'racket_track_counts', {}).get(track_id, 0)
+            if racket_hits >= 2:
+                activity_mult *= 2.5
 
             score = count * activity_mult
 
@@ -383,22 +392,33 @@ class PlayerTracker:
         player_dict = {}
 
         if self.backend == 'ultralytics' and self.model is not None:
-            track_kwargs = {'persist': True, 'verbose': False}
+            track_kwargs = {'persist': True, 'verbose': False, 'classes': [0, 38]}
             if self.device is not None:
                 track_kwargs['device'] = self.device
             results = self.model.track(frame, **track_kwargs)[0]
             id_name_dict = results.names
 
+            persons = []
+            rackets = []
             for box in results.boxes:
-                if box.id is not None:
-                    track_id = int(box.id.tolist()[0])
-                else:
-                    track_id = 0
+                cls_id = int(box.cls.tolist()[0])
+                cls_name = id_name_dict.get(cls_id, "")
                 result = box.xyxy.tolist()[0]
-                object_cls_id = int(box.cls.tolist()[0])
-                object_cls_name = id_name_dict.get(object_cls_id, "")
-                if object_cls_name == "person":
+                if cls_name == "person":
+                    track_id = int(box.id.tolist()[0]) if box.id is not None else 0
                     player_dict[track_id] = result
+                    persons.append((track_id, result))
+                elif cls_name == "tennis racket":
+                    rackets.append(result)
+
+            # Associate detected tennis rackets with person bounding boxes
+            for r in rackets:
+                rcx = (r[0] + r[2]) / 2.0
+                rcy = (r[1] + r[3]) / 2.0
+                for tid, pbox in persons:
+                    # Check if racket center is inside person box extended by 35px
+                    if (pbox[0] - 35 <= rcx <= pbox[2] + 35) and (pbox[1] - 35 <= rcy <= pbox[3] + 35):
+                        self.racket_track_counts[tid] = self.racket_track_counts.get(tid, 0) + 1
 
         elif self.backend == 'tf_saved_model':
             # Preprocess frame for TensorFlow model
