@@ -46,10 +46,10 @@ Hệ thống được thiết kế theo kiến trúc phân tách độc lập (M
 | Module | Công nghệ / Thuật toán | Mục đích |
 | :--- | :--- | :--- |
 | **Player Tracker** | YOLO26 + Multi-Track Stitching + Net Filtering | Bám vết người chơi (Hỗ trợ Đánh đơn 2 người & Đánh đôi 4 người), loại trừ trọng tài & người nhặt bóng |
-| **Ball Tracker** | YOLO26 Custom PyTorch / TF SavedModel | Nhận diện quả bóng tennis nhỏ, mờ do chuyển động tốc độ cao kèm vệt đuôi sao băng (Comet Trail) |
+| **Ball Tracker** | **Hybrid AI Engine** (TrackNetV4 + YOLO26) + Active Flight Motion Gating | Phát hiện bóng chuẩn xác cả khi chạm đất, nhòe tốc độ cao, lướt qua vạch trắng hoặc bị thân vợt/cơ thể che khuất; loại bỏ 100% bóng chết |
 | **Court Tracker** | TrackNet heatmaps + Homography + Pure CPV Lucas-Kanade Optical Flow | Định vị 14 điểm mốc sân tennis, bám sát vạch kẻ khi máy quay lia/zoom |
-| **MiniCourt** | Perspective Homography Transform ($3 \times 3$) | Ánh xạ tọa độ từ video góc phối cảnh sang bản đồ 2D chuẩn quốc tế kèm phát hiện bóng ngoài sân |
-| **Referee System** | Hawk-Eye Electronic Line Calling (ELC) & Point Scoring | Tự động kiểm tra bóng IN/OUT, đo khoảng cách mép vạch (cm), phân định ai ăn điểm và vẽ thẻ trọng tài truyền hình |
+| **MiniCourt** | Perspective Homography Transform ($3 \times 3$) + Anti-Snap Trajectory | Ánh xạ tọa độ từ video phối cảnh sang 2D chuẩn quốc tế, nội suy quỹ đạo 2 giai đoạn tự nhiên, chống giật lưới |
+| **Referee System** | **CatBoost ML Model** (`models/bounce_model.cbm`) + ITF Line Calling | Tự động phát hiện điểm tiếp đất $Z \approx 0$ bằng ML CatBoost, đo khoảng cách mép vạch (cm), phân định 3 kịch bản WINNER IN / OUT / NET ERROR |
 | **Match Analytics** | Physical Kinematics Modeling | Đo tốc độ cú đánh (km/h), tốc độ di chuyển tuyển thủ (km/h), đếm cú đánh |
 
 ---
@@ -70,12 +70,12 @@ flowchart TD
 
     subgraph IN ["🎬 1. INPUT & CẤU HÌNH"]
         V_IN["Video Đầu Vào (Broadcast Frames)<br/>• Full Match hoặc Clip cắt nhanh<br/>• Độ phân giải Full HD (1920x1080)"]:::inputStyle
-        CFG["File Cấu Hình Trung Tâm (config.yaml)<br/>• match_mode: auto / singles / doubles<br/>• use_stubs: cache pickle tăng tốc"]:::inputStyle
+        CFG["File Cấu Hình Trung Tâm (config.yaml)<br/>• ball_detector: hybrid / tracknet / yolo<br/>• match_mode: auto / singles / doubles<br/>• use_stubs: cache pickle tăng tốc"]:::inputStyle
     end
 
     subgraph DETECT ["👁️ 2. TRACKING ĐA NHIỆM (AI & COMPUTER VISION)"]
         PT["Player Tracker (YOLO26s)<br/>• Bám vết ByteTrack (Track IDs)<br/>• Spatial Proximity Stitching<br/>• Đánh Đơn (P1, P2) / Đánh Đôi (P1..P4)"]:::visionStyle
-        BT["Ball Tracker (YOLO26 Custom)<br/>• Model 4,454 ảnh bóng tennis<br/>• Multi-Pass Shot Detection (Inflection & Impulse)<br/>• Nội suy quỹ đạo bóng liên tục"]:::visionStyle
+        BT["Ball Tracker (Hybrid Engine ⭐⭐)<br/>• TrackNetV4 (Chạm đất, Motion Blur, Vạch trắng)<br/>• YOLO26 (Bù frame vung vợt & che khuất)<br/>• Active Post-Shot Flight Motion Gating<br/>• Khử Outlier & Nội suy Physics-Informed"]:::visionStyle
         CT["Court Line Tracker (Hybrid)<br/>• TrackNet heatmaps + homography<br/>• Lucas-Kanade Optical Flow hai chiều<br/>• Tái-detect khi camera dịch chuyển"]:::visionStyle
     end
 
@@ -86,14 +86,14 @@ flowchart TD
     end
 
     subgraph REF ["⚖️ 4. TRỢ LÝ TRỌNG TÀI HAWK-EYE ELC"]
-        BOUNCE["Xác Định Điểm Chạm Đất (Bounce)<br/>• Phát hiện tiếp xúc mặt sân Z ≈ 0<br/>• Khử điểm ảo khi bắt vô-lê trên không"]:::refStyle
-        DECISION["Phán Quyết Điểm Số Tự Động<br/>• Đo khoảng cách mép vạch Margin (cm)<br/>• OUT ➔ Điểm cho đối thủ<br/>• IN ➔ Điểm cho người đánh"]:::refStyle
+        BOUNCE["Mô hình CatBoost AI (models/bounce_model.cbm)<br/>• 12 đặc trưng động học & vận tốc V-shape<br/>• Nhận diện frame tiếp đất Z ≈ 0 chính xác<br/>• Khử điểm nảy ảo khi bắt vô-lê trên không"]:::refStyle
+        DECISION["Hệ thống Phán Quyết Hawk-Eye (ITF Rules)<br/>• Đo khoảng cách mép vạch Margin (cm)<br/>• Phán quyết 3 kịch bản: WINNER IN / OUT / NET ERROR<br/>• Trao điểm cho Hitter hoặc Opponent"]:::refStyle
     end
 
     subgraph RENDER ["🎨 5. VISUALIZATION & BROADCAST ENGINE"]
-        CARD["Thẻ Phán Quyết Trọng Tài<br/>(Kính mờ Glassmorphism, viền Neon IN/OUT)"]:::drawStyle
+        CARD["Thẻ Phán Quyết Trọng Tài<br/>(Kính mờ Glassmorphism, viền Neon IN/OUT/NET)"]:::drawStyle
         ZOOM["Hawk-Eye 2D Impact Zoom Inset<br/>(Caliper Guideline, vết nén bóng elip)"]:::drawStyle
-        MINI["Radar Mini-Court 2D Tương Tác<br/>(Lưới hổ phách, sóng xung kích, Badge P1..P4)"]:::drawStyle
+        MINI["Radar Mini-Court 2D Tương Tác<br/>(Lưới hổ phách, sóng xung kích, Anti-Snap vọt lưới, Badge P1..P4)"]:::drawStyle
         OVERLAY["Hiệu Ứng Trực Quan Trên Sân<br/>• Vòng elip & huy hiệu chân cầu thủ<br/>• Vệt đuôi sao băng Comet Tracer cho bóng<br/>• Bảng thống kê thi đấu tích lũy"]:::drawStyle
     end
 
