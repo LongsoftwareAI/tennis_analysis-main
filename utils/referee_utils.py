@@ -56,6 +56,7 @@ class RefereeSystem:
             net_cam_y = 450.0
 
         smooth_ys = pd.Series(cam_ys).rolling(window=3, min_periods=1, center=True).mean().values
+        valid_camera = np.isfinite(cam_xs) & np.isfinite(cam_ys)
 
         for idx, s in enumerate(ball_shot_frames):
             is_final = (idx == len(ball_shot_frames) - 1)
@@ -65,12 +66,15 @@ class RefereeSystem:
             if w_end <= w_start:
                 continue
 
-            # Look for local inflection / bounce point where ball touches court
-            best_bounce_f = None
-            # Determine shot direction using initial velocity vector (independent of camera net Y calibration)
-            f_check = min(num_frames - 1, s + 6)
-            dy_init = smooth_ys[f_check] - smooth_ys[s]
-            moving_to_near = (dy_init > 0)
+        if ml_bounces:
+            for idx, b in enumerate(ml_bounces):
+                f = b['frame']
+                bcx, bcy = b['camera_pos']
+                if not np.isfinite((bcx, bcy)).all():
+                    continue
+                preceding_shots = [i for i, s in enumerate(ball_shot_frames) if s < f]
+                shot_idx = preceding_shots[-1] if preceding_shots else 0
+                is_final = False
 
             if not moving_to_near:
                 # Ball moving away towards far court (reaches minimum Y on court before rising)
@@ -103,10 +107,73 @@ class RefereeSystem:
                     if valid_fs:
                         best_bounce_f = valid_fs[int(np.argmax([smooth_ys[f] for f in valid_fs]))]
 
-            if best_bounce_f is None:
-                if is_final:
-                    best_bounce_f = min(num_frames - 1, s + 11)
+                is_in = (court_left - 5 <= mini_x <= court_right + 5) and (baseline_far - 5 <= mini_y <= baseline_near + 5)
+                margin_side = min(mini_x - court_left, court_right - mini_x) * px_to_cm
+                margin_base = min(mini_y - baseline_far, baseline_near - mini_y) * px_to_cm
+                min_margin = min(margin_side, margin_base) if is_in else -max(court_left - mini_x, mini_x - court_right, baseline_far - mini_y, mini_y - baseline_near) * px_to_cm
+
+                bounces.append({
+                    'shot_idx': shot_idx,
+                    'is_final': is_final,
+                    'frame': f,
+                    'peak_frame': f,
+                    'camera_pos': (bcx, bcy),
+                    'mini_pos': (mini_x, mini_y),
+                    'is_in': is_in,
+                    'margin_cm': min_margin,
+                    'margin_side_cm': margin_side,
+                    'margin_base_cm': margin_base,
+                    'score': b.get('score', 0.5)
+                })
+        else:
+            # Kinematic fallback if ML model is unavailable or detected no candidate
+            for idx, s in enumerate(ball_shot_frames):
+                is_final = (idx == len(ball_shot_frames) - 1)
+                next_s = ball_shot_frames[idx + 1] if not is_final else num_frames - 1
+                w_start = min(num_frames - 1, s + 4)
+                w_end = min(num_frames - 1, next_s - 2) if not is_final else min(num_frames - 1, s + 50)
+                if w_end <= w_start:
+                    continue
+
+                best_bounce_f = None
+                f_check = min(num_frames - 1, s + 6)
+                dy_init = smooth_ys[f_check] - smooth_ys[s]
+                moving_to_near = (dy_init > 0)
+
+                if not moving_to_near:
+                    for f in range(w_start, w_end + 1):
+                        if not valid_camera[f]:
+                            continue
+                        if smooth_ys[f] < court_min_y:
+                            continue
+                        if not is_final and (next_s - f <= 2):
+                            continue
+                        if 0 < f < num_frames - 1:
+                            if smooth_ys[f] <= smooth_ys[f - 1] and smooth_ys[f] <= smooth_ys[f + 1]:
+                                best_bounce_f = f
+                                break
+                    if best_bounce_f is None and is_final:
+                        valid_fs = [f for f in range(w_start, w_end + 1) if valid_camera[f] and smooth_ys[f] >= court_min_y]
+                        if valid_fs:
+                            best_bounce_f = valid_fs[int(np.argmin([smooth_ys[f] for f in valid_fs]))]
                 else:
+                    for f in range(w_start, w_end + 1):
+                        if not valid_camera[f]:
+                            continue
+                        if smooth_ys[f] < court_min_y:
+                            continue
+                        if not is_final and (next_s - f <= 2):
+                            continue
+                        if 0 < f < num_frames - 1:
+                            if smooth_ys[f] >= smooth_ys[f - 1] and smooth_ys[f] >= smooth_ys[f + 1]:
+                                best_bounce_f = f
+                                break
+                    if best_bounce_f is None and is_final:
+                        valid_fs = [f for f in range(w_start, w_end + 1) if valid_camera[f] and smooth_ys[f] >= court_min_y]
+                        if valid_fs:
+                            best_bounce_f = valid_fs[int(np.argmax([smooth_ys[f] for f in valid_fs]))]
+
+                if best_bounce_f is None:
                     continue
 
             # Physical ground touchdown occurs at the first deceleration frame (1 frame before apex)
@@ -333,6 +400,8 @@ class RefereeSystem:
                 b_frame = bounce['frame']
                 age = f_idx - b_frame
                 if 0 <= age <= 22:
+                    if not np.isfinite(bounce['camera_pos']).all():
+                        continue
                     bc_x, bc_y = int(bounce['camera_pos'][0]), int(bounce['camera_pos'][1])
                     b_is_in = bounce.get('is_in', True)
                     b_color = (30, 230, 60) if b_is_in else (30, 30, 230)
