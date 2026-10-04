@@ -66,6 +66,7 @@ class RefereeSystem:
             net_cam_y = 450.0
 
         smooth_ys = pd.Series(cam_ys).rolling(window=3, min_periods=1, center=True).mean().values
+        valid_camera = np.isfinite(cam_xs) & np.isfinite(cam_ys)
 
         # Run ML-based CatBoost Bounce Detection
         ml_bounces = []
@@ -76,6 +77,8 @@ class RefereeSystem:
             for idx, b in enumerate(ml_bounces):
                 f = b['frame']
                 bcx, bcy = b['camera_pos']
+                if not np.isfinite((bcx, bcy)).all():
+                    continue
                 preceding_shots = [i for i, s in enumerate(ball_shot_frames) if s < f]
                 shot_idx = preceding_shots[-1] if preceding_shots else 0
                 is_final = False
@@ -128,6 +131,8 @@ class RefereeSystem:
 
                 if not moving_to_near:
                     for f in range(w_start, w_end + 1):
+                        if not valid_camera[f]:
+                            continue
                         if smooth_ys[f] < court_min_y:
                             continue
                         if not is_final and (next_s - f <= 2):
@@ -137,11 +142,13 @@ class RefereeSystem:
                                 best_bounce_f = f
                                 break
                     if best_bounce_f is None and is_final:
-                        valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
+                        valid_fs = [f for f in range(w_start, w_end + 1) if valid_camera[f] and smooth_ys[f] >= court_min_y]
                         if valid_fs:
                             best_bounce_f = valid_fs[int(np.argmin([smooth_ys[f] for f in valid_fs]))]
                 else:
                     for f in range(w_start, w_end + 1):
+                        if not valid_camera[f]:
+                            continue
                         if smooth_ys[f] < court_min_y:
                             continue
                         if not is_final and (next_s - f <= 2):
@@ -151,7 +158,7 @@ class RefereeSystem:
                                 best_bounce_f = f
                                 break
                     if best_bounce_f is None and is_final:
-                        valid_fs = [f for f in range(w_start, w_end + 1) if smooth_ys[f] >= court_min_y]
+                        valid_fs = [f for f in range(w_start, w_end + 1) if valid_camera[f] and smooth_ys[f] >= court_min_y]
                         if valid_fs:
                             best_bounce_f = valid_fs[int(np.argmax([smooth_ys[f] for f in valid_fs]))]
 
@@ -459,6 +466,8 @@ class RefereeSystem:
                 b_frame = bounce['frame']
                 age = f_idx - b_frame
                 if 0 <= age <= 22:
+                    if not np.isfinite(bounce['camera_pos']).all():
+                        continue
                     bc_x, bc_y = int(bounce['camera_pos'][0]), int(bounce['camera_pos'][1])
                     b_is_in = bounce.get('is_in', True)
                     b_color = (30, 230, 60) if (b_is_in and decision != "NET") else (30, 30, 230)
