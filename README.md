@@ -257,9 +257,9 @@ Tuyển thủ luôn tiếp xúc mặt sân đất ($Z \approx 0$). Điểm chân
 #### 5. Quỹ đạo pha bóng kết thúc & Cơ chế chống giật lưới (End-of-Rally Trajectory & Anti-Snap Mechanics):
 - **Bản đồ hóa điểm nảy đầu tiên (First Bounce Mapping)**: Cố định `bounce_map` để lưu điểm nảy đầu tiên của từng cú đánh, ngăn chặn triệt để tình trạng các cú nảy phụ ngoài sân ghi đè điểm chạm đất chính.
 - **Nội suy chuyển động 2 giai đoạn cho pha bóng quyết định**:
-  - **Giai đoạn 1 ($f \le \text{landing\_frame}$)**: Bóng bay mượt mà từ vị trí người đánh tới điểm tiếp đất chuẩn xác (`landing_pos_mini`).
-  - **Giai đoạn 2 ($\text{landing\_frame} < f \le \text{second\_bounce\_frame}$)**: Bóng nảy từ điểm tiếp đất 1 văng tự nhiên ra điểm tiếp đất thứ 2 (`second_bounce_pos` ở ngoài baseline).
-  - **Giai đoạn 3 ($f > \text{second\_bounce\_frame}$)**: Bóng dừng lại ở điểm chạm đất thứ 2 cho đến khi pha bóng kết thúc hoàn toàn.
+  - **Giai đoạn 1 (`f <= landing_frame`)**: Bóng bay mượt mà từ vị trí người đánh tới điểm tiếp đất chuẩn xác (`landing_pos_mini`).
+  - **Giai đoạn 2 (`landing_frame < f <= second_bounce_frame`)**: Bóng nảy từ điểm tiếp đất 1 văng tự nhiên ra điểm tiếp đất thứ 2 (`second_bounce_pos` ở ngoài baseline).
+  - **Giai đoạn 3 (`f > second_bounce_frame`)**: Bóng dừng lại ở điểm chạm đất thứ 2 cho đến khi pha bóng kết thúc hoàn toàn.
 - **Triệt tiêu hiện tượng giật lưới**: Khắc phục triệt để lỗi khi bóng đi hết sân lại bị kéo giật ngược về chính giữa lưới. Đồng thời với các pha bóng rúc lưới thực tế, bóng bay từ vạch cuối sân cắm thẳng vào lưới và rơi xuống chân lưới một cách hoàn toàn tự nhiên.
 
 ---
