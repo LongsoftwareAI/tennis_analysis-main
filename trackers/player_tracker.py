@@ -78,37 +78,57 @@ class PlayerTracker:
             # Net line Y is the midpoint between top and bottom service lines (indices 8, 10)
             net_y = (float(ref_kps[2 * 8 + 1]) + float(ref_kps[2 * 10 + 1])) / 2.0
 
-            # Vertical depth bounds: players can run behind far baseline or near baseline
-            # Far baseline margin: 0.16 * court_h (rejects spectators/linesmen standing at back wall)
-            # Near baseline margin: 0.35 * court_h (players running wide towards broadcast camera)
-            y_min = y_far - 0.16 * court_h
-            y_max = y_near + 0.35 * court_h
+            # Vertical depth bounds: generous tournament arena perimeter covering full ITF run-off areas
+            # Professional players frequently run 6-8 meters behind baseline to defend or retrieve deep balls
+            y_min = y_far - 0.50 * court_h
+            y_max = y_near + 0.60 * court_h
 
-            def is_inside_playing_perimeter(cx, cy):
-                if cy < y_min or cy > y_max:
-                    return False
-                # Perspective interpolation factor along court depth
-                alpha = np.clip((cy - y_far) / court_h, -0.16, 1.35)
-                x_left = x0 + alpha * (x2 - x0)
-                x_right = x1 + alpha * (x3 - x1)
-                court_w = max(10.0, x_right - x_left)
-                # Players run outside doubles sidelines by at most 22% of local court width
-                margin = 0.22 * court_w
-                return (x_left - margin) <= cx <= (x_right + margin)
+            def is_inside_playing_perimeter(cx, cy, frame_idx=0):
+                # If per-frame court keypoints are provided, adapt to camera pan / tilt dynamically
+                if (court_keypoints is not None and isinstance(court_keypoints, (list, np.ndarray))
+                    and frame_idx < len(court_keypoints) and hasattr(court_keypoints[frame_idx], '__len__')
+                    and len(court_keypoints[frame_idx]) >= 28):
+                    cur_kps = court_keypoints[frame_idx]
+                    cur_x0, cur_y0 = float(cur_kps[0]), float(cur_kps[1])
+                    cur_x1, cur_y1 = float(cur_kps[2]), float(cur_kps[3])
+                    cur_x2, cur_y2 = float(cur_kps[4]), float(cur_kps[5])
+                    cur_x3, cur_y3 = float(cur_kps[6]), float(cur_kps[7])
+                    cur_y_far = (cur_y0 + cur_y1) / 2.0
+                    cur_y_near = (cur_y2 + cur_y3) / 2.0
+                    cur_h = max(1.0, cur_y_near - cur_y_far)
+                    cur_ymin = cur_y_far - 0.50 * cur_h
+                    cur_ymax = cur_y_near + 0.60 * cur_h
+                    if cy < cur_ymin or cy > cur_ymax:
+                        return False
+                    alpha = np.clip((cy - cur_y_far) / cur_h, -0.50, 1.60)
+                    xl = cur_x0 + alpha * (cur_x2 - cur_x0)
+                    xr = cur_x1 + alpha * (cur_x3 - cur_x1)
+                    cw = max(10.0, xr - xl)
+                    margin = 0.35 * cw
+                    return (xl - margin) <= cx <= (xr + margin)
+                else:
+                    if cy < y_min or cy > y_max:
+                        return False
+                    alpha = np.clip((cy - y_far) / court_h, -0.50, 1.60)
+                    xl = x0 + alpha * (x2 - x0)
+                    xr = x1 + alpha * (x3 - x1)
+                    cw = max(10.0, xr - xl)
+                    margin = 0.35 * cw
+                    return (xl - margin) <= cx <= (xr + margin)
         else:
             net_y = 530.0
-            def is_inside_playing_perimeter(cx, cy):
-                return (100.0 <= cx <= 1820.0 and 80.0 <= cy <= 1040.0)
+            def is_inside_playing_perimeter(cx, cy, frame_idx=0):
+                return (50.0 <= cx <= 1870.0 and 40.0 <= cy <= 1080.0)
 
         # Collect track statistics across all frames for tracks inside the playing perimeter
         track_stats = {}
-        for p_dict in player_detections:
+        for f_idx, p_dict in enumerate(player_detections):
             for track_id, bbox in p_dict.items():
                 cx = (bbox[0] + bbox[2]) / 2.0
                 cy = (bbox[1] + bbox[3]) / 2.0
 
-                # Strictly reject spectators, chair umpires, ball boys outside playing trapezoid
-                if not is_inside_playing_perimeter(cx, cy):
+                # Strictly reject spectators in grandstands outside playing arena
+                if not is_inside_playing_perimeter(cx, cy, frame_idx=f_idx):
                     continue
 
                 if track_id not in track_stats:
@@ -213,16 +233,28 @@ class PlayerTracker:
         filtered_player_detections = []
         last_positions = {}
 
-        for player_dict in player_detections:
+        for f_idx, player_dict in enumerate(player_detections):
             frame_res = {}
 
-            # Filter out any detection in current frame outside playing perimeter
+            # Accept candidate player detections anywhere on their respective court half
+            # (players have full freedom to run deep behind baseline or into side run-off areas to return balls)
+            kps = court_keypoints[f_idx] if (court_keypoints is not None and isinstance(court_keypoints, (list, np.ndarray)) and f_idx < len(court_keypoints) and hasattr(court_keypoints[f_idx], '__len__') and len(court_keypoints[f_idx]) >= 22) else ref_kps
+            cur_net_y = (float(kps[17]) + float(kps[21])) / 2.0 if (kps is not None and len(kps) >= 22) else net_y
+
             valid_p_dict = {}
             for t, box in player_dict.items():
-                cx = (box[0] + box[2]) / 2.0
                 cy = (box[1] + box[3]) / 2.0
-                if is_inside_playing_perimeter(cx, cy):
-                    valid_p_dict[t] = box
+                # Court side sanity check: allow full freedom on each player's half of the arena
+                if t in near_candidates:
+                    if cy >= cur_net_y - 80.0:
+                        valid_p_dict[t] = box
+                elif t in far_candidates:
+                    if cy <= cur_net_y + 80.0:
+                        valid_p_dict[t] = box
+                else:
+                    cx = (box[0] + box[2]) / 2.0
+                    if is_inside_playing_perimeter(cx, cy, frame_idx=f_idx):
+                        valid_p_dict[t] = box
 
             # --- 1. Near Court Assignment (Team 1) ---
             if not is_doubles:
