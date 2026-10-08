@@ -265,7 +265,7 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
         stub_path=ball_stub,
         batch_size=cfg["tracking"].get("ball_batch_size", 4)
     )
-    ball_detections = ball_tracker.interpolate_ball_positions(ball_detections)
+    ball_detections = ball_tracker.interpolate_ball_positions(ball_detections, player_positions=player_detections)
 
     # 6. Court Keypoint Extraction (TrackNet-corrected CPV Optical Flow)
     print("[CourtLineDetector] TrackNet Heatmaps + Homography Init, then Lucas-Kanade + RANSAC...")

@@ -17,7 +17,7 @@ video:
   #   - "input_videos/new_input/clips/clip_03_duckworth_vs_hewitt.mp4"    (Pha bóng Duckworth vs Hewitt)
   #   - "input_videos/new_input/clips/clip_04_monfils_rally.mp4"          (Pha rally của Monfils)
   #   - "input_videos/input_video.mp4"                                    (Video mẫu ban đầu)
-  input_path: "input_videos/new_input/clips/test2.mp4"
+  input_path: "input_videos/new_input/clips/input_video_2.mp4"
 
   # Thư mục lưu kết quả phân tích
   output_dir: "output_videos"

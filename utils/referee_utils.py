@@ -313,8 +313,28 @@ class RefereeSystem:
         # Check whether the shot failed to cross the net (NET ERROR / RUC LUOI)
         is_net_error = False
         if not receiver_court_bounces:
-            # If there are no bounces on receiver's court and subsequent bounces are at the net or hitter's side
-            is_net_error = True
+            # Check if immediately preceding shot already scored a clean winner on the hitter's court
+            prev_decisive_bounce = None
+            if len(ball_shot_frames) >= 2:
+                prev_shot = ball_shot_frames[-2]
+                prev_bounces = [b for b in self.all_bounces if prev_shot < b['frame'] <= final_shot_frame]
+                hitter_side_bounces = [b for b in prev_bounces if ((b['mini_pos'][1] > net_y) == is_near_hitter)]
+                if hitter_side_bounces and hitter_side_bounces[0]['is_in']:
+                    prev_decisive_bounce = hitter_side_bounces[0]
+
+            if prev_decisive_bounce is not None:
+                # Preceding shot was an unreturned clean Winner landing in-court!
+                # Attribute decisive win to the preceding shot
+                final_shot_idx -= 1
+                final_shot_frame = ball_shot_frames[final_shot_idx]
+                is_near_hitter = not is_near_hitter
+                hitter_team, receiver_team = receiver_team, hitter_team
+                hitter_id = 2 if hitter_team == 2 else 1
+                receiver_id = 2 if hitter_id == 1 else 1
+                receiver_court_bounces = [prev_decisive_bounce]
+                post_shot_bounces = [b for b in self.all_bounces if b['frame'] > final_shot_frame]
+            else:
+                is_net_error = True
 
         first_bounce = None
         second_bounce = None

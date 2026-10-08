@@ -107,10 +107,39 @@ class BallTracker:
                     print(f"[BallTracker] Hybrid Engine: Could not load auxiliary YOLO ({e}), continuing with TrackNet only.")
                     self.aux_yolo = None
 
-    def interpolate_ball_positions(self, ball_positions):
+    @staticmethod
+    def _extract_subpixel_centroid(pred_map, orig_w, orig_h, target_w, target_h, r=2):
         """
-        Clean erratic teleportation noise using tracklet velocity clustering,
-        followed by physically-constrained linear interpolation.
+        Estimate continuous sub-pixel centroid on a 2D confidence heatmap
+        using local 5x5 Gaussian/intensity-weighted center-of-mass, eliminating
+        discrete grid quantization jitter.
+        """
+        py, px = np.unravel_index(np.argmax(pred_map), pred_map.shape)
+        h_map, w_map = pred_map.shape
+        y_min = max(0, py - r)
+        y_max = min(h_map, py + r + 1)
+        x_min = max(0, px - r)
+        x_max = min(w_map, px + r + 1)
+        patch = pred_map[y_min:y_max, x_min:x_max]
+        local_max = float(patch.max())
+        local_thresh = local_max * 0.45
+        weights = np.maximum(0.0, patch - local_thresh)
+        total_w = float(weights.sum())
+        if total_w > 1e-6:
+            grid_y, grid_x = np.indices(patch.shape)
+            sub_py = y_min + float(np.sum(grid_y * weights)) / total_w
+            sub_px = x_min + float(np.sum(grid_x * weights)) / total_w
+        else:
+            sub_py, sub_px = float(py), float(px)
+        cx = (sub_px / float(target_w)) * orig_w
+        cy = (sub_py / float(target_h)) * orig_h
+        return cx, cy, float(local_max)
+
+    def interpolate_ball_positions(self, ball_positions, player_positions=None):
+        """
+        Clean erratic teleportation noise, suppress court-edge/shoe artifacts,
+        apply Physics-Informed Ballistic Parabolic Fitting for airborne high lobs,
+        and perform physically-constrained linear interpolation for short occlusions.
         """
         ball_positions_list = [x.get(1, []) if (1 in x and len(x[1]) == 4) else [np.nan, np.nan, np.nan, np.nan] for x in ball_positions]
         df_ball_positions = pd.DataFrame(ball_positions_list, columns=['x1', 'y1', 'x2', 'y2'])
@@ -119,10 +148,28 @@ class BallTracker:
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
         mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
 
-        # 1. Height filter: reject detections high in stadium roof/audience
+        # 1. Height filter: reject detections high in stadium roof/audience outside central court corridor
         for i in range(n):
-            if pd.notna(mid_y.iloc[i]) and mid_y.iloc[i] < 120.0:
-                df_ball_positions.iloc[i] = [np.nan, np.nan, np.nan, np.nan]
+            if pd.notna(mid_y.iloc[i]):
+                if mid_y.iloc[i] < 35.0 or (mid_y.iloc[i] < 120.0 and (mid_x.iloc[i] < 320.0 or mid_x.iloc[i] > 1600.0)):
+                    df_ball_positions.iloc[i] = [np.nan, np.nan, np.nan, np.nan]
+
+        # 1.5. Suppress stationary/slow false detections at bottom floor corners (player shoes / baseline lines)
+        mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
+        mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
+        for i in range(n):
+            if pd.notna(mid_y.iloc[i]) and mid_y.iloc[i] > 890.0:
+                if mid_x.iloc[i] < 260.0 or mid_x.iloc[i] > 1660.0:
+                    is_slow = True
+                    for offset in (-2, -1, 1, 2):
+                        chk = i + offset
+                        if 0 <= chk < n and pd.notna(mid_x.iloc[chk]):
+                            spd = np.hypot(mid_x.iloc[i] - mid_x.iloc[chk], mid_y.iloc[i] - mid_y.iloc[chk]) / abs(offset)
+                            if spd > 12.0:
+                                is_slow = False
+                                break
+                    if is_slow:
+                        df_ball_positions.iloc[i] = [np.nan, np.nan, np.nan, np.nan]
 
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
         mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
@@ -140,8 +187,8 @@ class BallTracker:
                 last_f, last_pt = curr[-1]
                 dt = i - last_f
                 dist = np.linalg.norm(pt - last_pt)
-                # Maximum physical speed of a tennis ball in 25-30fps broadcast is ~55 px/frame
-                if dt <= 3 and (dist / dt) <= 55.0:
+                # Maximum physical speed of a tennis ball in 25-50fps broadcast is ~65 px/frame
+                if dt <= 3 and (dist / dt) <= 65.0:
                     curr.append((i, pt))
                 else:
                     tracklets.append(curr)
@@ -149,21 +196,93 @@ class BallTracker:
         if curr:
             tracklets.append(curr)
 
-        # Eliminate short isolated noise bursts (<= 3 frames) that are disconnected from rally
+        # Eliminate short isolated noise bursts (single frames or stationary 2-frame noise)
         rejected_count = 0
         for tr in tracklets:
-            if len(tr) <= 3:
-                for f_idx, pt in tr:
-                    df_ball_positions.iloc[f_idx] = [np.nan, np.nan, np.nan, np.nan]
-                    rejected_count += 1
+            if len(tr) == 1:
+                df_ball_positions.iloc[tr[0][0]] = [np.nan, np.nan, np.nan, np.nan]
+                rejected_count += 1
+            elif len(tr) == 2:
+                # If essentially stationary / noise (distance < 5 px)
+                d = np.linalg.norm(tr[1][1] - tr[0][1])
+                if d < 5.0:
+                    for f_idx, pt in tr:
+                        df_ball_positions.iloc[f_idx] = [np.nan, np.nan, np.nan, np.nan]
+                        rejected_count += 1
 
         if rejected_count > 0:
             print(f"[BallTracker] Trajectory Sanitizer: Suppressed {rejected_count} erratic noise/teleportation detections.")
 
+        # 2.5. Physics-Informed Ballistic Parabolic Fitting for High Lobs
+        mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
+        mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
+        gap_idx = 0
+        while gap_idx < n:
+            if pd.isna(mid_x.iloc[gap_idx]):
+                s_gap = gap_idx
+                while gap_idx < n and pd.isna(mid_x.iloc[gap_idx]):
+                    gap_idx += 1
+                e_gap = gap_idx
+                gap_len = e_gap - s_gap
+                f_A = s_gap - 1
+                f_B = e_gap
+                if 12 <= gap_len <= 180 and f_A >= 0 and f_B < n:
+                    pts_pre = [(mid_x.iloc[k], mid_y.iloc[k]) for k in range(max(0, f_A - 5), f_A + 1) if pd.notna(mid_x.iloc[k])]
+                    pts_post = [(mid_x.iloc[k], mid_y.iloc[k]) for k in range(f_B, min(n, f_B + 6)) if pd.notna(mid_x.iloc[k])]
+                    if len(pts_pre) >= 2 and len(pts_post) >= 2:
+                        vy_pre = (pts_pre[-1][1] - pts_pre[0][1]) / float(len(pts_pre) - 1)
+                        vy_post = (pts_post[-1][1] - pts_post[0][1]) / float(len(pts_post) - 1)
+                        if vy_pre <= -4.0 and vy_post >= 4.0:
+                            xA, yA = pts_pre[-1]
+                            xB, yB = pts_post[0]
+                            # Detect if an overhead smash struck at the net near f_B
+                            f_smash = max(f_A + 10, f_B - 9)
+                            x_smash = None
+                            y_smash = None
+                            if player_positions is not None and 0 <= f_smash < len(player_positions):
+                                p_dict = player_positions[f_smash]
+                                for p_cand_id in (2, 4, 1):
+                                    if p_cand_id in p_dict and len(p_dict[p_cand_id]) == 4:
+                                        pb = p_dict[p_cand_id]
+                                        if (pb[1] + pb[3]) / 2.0 < 450.0:
+                                            x_smash = (pb[0] + pb[2]) / 2.0
+                                            y_smash = pb[1] - 15.0
+                                            break
+                            if x_smash is None:
+                                vx_post = (pts_post[-1][0] - pts_post[0][0]) / float(len(pts_post) - 1)
+                                dt_back = float(f_B - f_smash)
+                                x_smash = xB - vx_post * dt_back
+                                y_smash = max(60.0, yB - vy_post * dt_back)
+
+                            # Parabolic arc for lob: f_A -> f_smash
+                            t_lob = f_smash - f_A
+                            if t_lob > 0:
+                                for t in range(1, t_lob):
+                                    f = f_A + t
+                                    alpha = t / float(t_lob)
+                                    x = xA + alpha * (x_smash - xA)
+                                    v0 = min(-12.0, vy_pre)
+                                    a = 2.0 * (y_smash - yA - v0 * t_lob) / (t_lob ** 2)
+                                    y = yA + v0 * t + 0.5 * a * (t ** 2)
+                                    df_ball_positions.iloc[f] = [x - 9.0, y - 9.0, x + 9.0, y + 9.0]
+                            # Linear descent for smash: f_smash -> f_B
+                            t_sm = f_B - f_smash
+                            if t_sm > 0:
+                                for t in range(0, t_sm):
+                                    f = f_smash + t
+                                    alpha = t / float(t_sm)
+                                    x = x_smash + alpha * (xB - x_smash)
+                                    y = y_smash + alpha * (yB - y_smash)
+                                    df_ball_positions.iloc[f] = [x - 9.0, y - 9.0, x + 9.0, y + 9.0]
+                            print(f"[BallTracker] Ballistic Lob Recovery: Reconstructed {gap_len}-frame parabolic lob (F{f_A}->F{f_smash}->F{f_B}).")
+                gap_idx = e_gap
+            else:
+                gap_idx += 1
+
         # 3. Controlled linear interpolation: ONLY bridge short occlusion gaps (max 3 frames ~ 0.12s)
         df_ball_positions = df_ball_positions.interpolate(method='linear', limit=3)
 
-        # 4. Final velocity gate: eliminate any remaining jump artifact (> 65 px/frame)
+        # 4. Final velocity gate: eliminate any remaining jump artifact (> 70 px/frame)
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
         mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
         prev_valid_f = None
@@ -174,7 +293,7 @@ class BallTracker:
                 if prev_valid_pt is not None:
                     dt = i - prev_valid_f
                     dist = np.linalg.norm(pt - prev_valid_pt)
-                    if (dist / dt) > 65.0:
+                    if (dist / dt) > 70.0:
                         df_ball_positions.iloc[i] = [np.nan, np.nan, np.nan, np.nan]
                         continue
                 prev_valid_f = i
@@ -206,8 +325,9 @@ class BallTracker:
         Detect frames where a shot occurred based on vertical trajectory inflection.
         Also detects unclosed final return shots near the end of a rally using player proximity.
         """
-        if any(not b.get(1) for b in ball_positions):
-            ball_positions = self.interpolate_ball_positions(ball_positions)
+        valid_indices = [i for i, b in enumerate(ball_positions) if 1 in b]
+        if valid_indices and (valid_indices[-1] - valid_indices[0] > len(valid_indices) * 1.4):
+            ball_positions = self.interpolate_ball_positions(ball_positions, player_positions=player_positions)
 
         ball_positions_list = [x.get(1, []) for x in ball_positions]
         df_ball_positions = pd.DataFrame(ball_positions_list, columns=['x1', 'y1', 'x2', 'y2'])
@@ -231,8 +351,12 @@ class BallTracker:
                 bx = df_ball_positions['mid_x'].iloc[i]
                 by = df_ball_positions['mid_y'].iloc[i]
 
-                # 1. Height filter: reject airborne turning points in the sky (e.g. lob apex at Y < 120px)
-                if not np.isnan(by) and by < 120.0:
+                # 0. Reject floor/shoe noise artifact near baseline corners
+                if not np.isnan(by) and by > 890.0 and (bx < 260.0 or bx > 1660.0):
+                    continue
+
+                # 1. Height filter: reject airborne turning points in the stadium roof (Y < 40px)
+                if not np.isnan(by) and by < 40.0:
                     continue
 
                 # 2. Player proximity check: a true shot must occur within reach of a player's racket
@@ -316,7 +440,9 @@ class BallTracker:
                 if any(abs(i - s) < 22 for s in filtered_shots):
                     continue
                 bx, by = df_ball_positions['mid_x'].iloc[i], df_ball_positions['mid_y'].iloc[i]
-                if np.isnan(bx) or np.isnan(by) or by < 120.0:
+                if np.isnan(bx) or np.isnan(by) or by < 40.0:
+                    continue
+                if by > 890.0 and (bx < 260.0 or bx > 1660.0):
                     continue
 
                 min_dist = float('inf')
@@ -431,12 +557,12 @@ class BallTracker:
                     next_idx = n
                     break
 
-            # If the gap is too large (> 14 frames ~ 0.5s), don't interpolate blindly with YOLO
+            # If the gap is too large (> 20 frames ~ 0.7s), don't interpolate blindly with YOLO
             if prev_idx is None and next_idx is None:
                 continue
 
             frame = frames_list[idx]
-            res = self.aux_yolo.predict(frame, conf=0.18, verbose=False, device=device_arg)
+            res = self.aux_yolo.predict(frame, conf=0.10, verbose=False, device=device_arg)
             boxes = res[0].boxes
             if len(boxes) == 0:
                 continue
@@ -452,7 +578,7 @@ class BallTracker:
             best_cand = None
 
             # Case A: Bounded between prev_idx and next_idx
-            if prev_idx is not None and next_idx is not None and (next_idx - prev_idx) <= 14:
+            if prev_idx is not None and next_idx is not None and (next_idx - prev_idx) <= 20:
                 p_box = tracked_boxes[prev_idx]
                 n_box = tracked_boxes[next_idx]
                 px, py = (p_box[0] + p_box[2]) / 2.0, (p_box[1] + p_box[3]) / 2.0
@@ -461,22 +587,22 @@ class BallTracker:
                 ex = px + alpha * (nx - px)
                 ey = py + alpha * (ny - py)
                 span_dist = np.hypot(nx - px, ny - py)
-                gate_radius = max(75.0, 1.4 * span_dist * alpha * (1.0 - alpha) + 40.0)
+                gate_radius = max(80.0, 1.4 * span_dist * alpha * (1.0 - alpha) + 45.0)
 
                 valid_cands = [c for c in cands if np.hypot(c[0] - ex, c[1] - ey) <= gate_radius]
                 if valid_cands:
                     best_cand = min(valid_cands, key=lambda c: np.hypot(c[0] - ex, c[1] - ey))
 
-            # Case B: Trailing detection (only prev_idx known, within 5 frames)
-            elif prev_idx is not None and (idx - prev_idx) <= 5:
+            # Case B: Trailing detection (only prev_idx known, within 12 frames)
+            elif prev_idx is not None and (idx - prev_idx) <= 12:
                 p_box = tracked_boxes[prev_idx]
                 px, py = (p_box[0] + p_box[2]) / 2.0, (p_box[1] + p_box[3]) / 2.0
                 valid_cands = [c for c in cands if np.hypot(c[0] - px, c[1] - py) <= 85.0 * (idx - prev_idx)]
                 if valid_cands:
                     best_cand = max(valid_cands, key=lambda c: c[2])
 
-            # Case C: Leading detection (only next_idx known, within 5 frames)
-            elif next_idx is not None and (next_idx - idx) <= 5:
+            # Case C: Leading detection (only next_idx known, within 12 frames)
+            elif next_idx is not None and (next_idx - idx) <= 12:
                 n_box = tracked_boxes[next_idx]
                 nx, ny = (n_box[0] + n_box[2]) / 2.0, (n_box[1] + n_box[3]) / 2.0
                 valid_cands = [c for c in cands if np.hypot(c[0] - nx, c[1] - ny) <= 85.0 * (next_idx - idx)]
@@ -552,10 +678,17 @@ class BallTracker:
                 for i_offset, f_idx in enumerate(range(start_i, end_i)):
                     pred_map = argmax_maps[i_offset]
                     max_conf = int(pred_map.max())
-                    if max_conf >= self.conf_thresh:
-                        py, px = np.unravel_index(np.argmax(pred_map), pred_map.shape)
-                        cx = (px / float(target_w)) * orig_w
-                        cy = (py / float(target_h)) * orig_h
+                    prev_box = tracked_boxes[f_idx - 1] if f_idx > 0 else None
+                    eff_thresh = max(45, int(self.conf_thresh * 0.55)) if prev_box is not None else self.conf_thresh
+
+                    if max_conf >= eff_thresh:
+                        cx, cy, _ = self._extract_subpixel_centroid(pred_map, orig_w, orig_h, target_w, target_h)
+                        if max_conf < self.conf_thresh and prev_box is not None:
+                            prev_cx = (prev_box[0] + prev_box[2]) / 2.0
+                            prev_cy = (prev_box[1] + prev_box[3]) / 2.0
+                            if np.hypot(cx - prev_cx, cy - prev_cy) > 85.0:
+                                tracked_boxes[f_idx] = None
+                                continue
                         tracked_boxes[f_idx] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
                     else:
                         tracked_boxes[f_idx] = None
@@ -623,10 +756,17 @@ class BallTracker:
                 for i_offset, f_idx in enumerate(range(start_i, end_i)):
                     pred_map = heatmaps[i_offset, :, :, 0]
                     max_conf = float(pred_map.max())
-                    if max_conf >= self.conf_thresh:
-                        py, px = np.unravel_index(np.argmax(pred_map), pred_map.shape)
-                        cx = (px / float(target_w)) * orig_w
-                        cy = (py / float(target_h)) * orig_h
+                    prev_box = tracked_boxes[f_idx - 1] if f_idx > 0 else None
+                    eff_thresh = max(0.12, self.conf_thresh * 0.50) if prev_box is not None else self.conf_thresh
+
+                    if max_conf >= eff_thresh:
+                        cx, cy, _ = self._extract_subpixel_centroid(pred_map, orig_w, orig_h, target_w, target_h)
+                        if max_conf < self.conf_thresh and prev_box is not None:
+                            prev_cx = (prev_box[0] + prev_box[2]) / 2.0
+                            prev_cy = (prev_box[1] + prev_box[3]) / 2.0
+                            if np.hypot(cx - prev_cx, cy - prev_cy) > 85.0:
+                                tracked_boxes[f_idx] = None
+                                continue
                         tracked_boxes[f_idx] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
                     else:
                         tracked_boxes[f_idx] = None
