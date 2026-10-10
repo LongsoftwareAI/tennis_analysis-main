@@ -32,6 +32,7 @@ Hệ thống trích xuất và hiển thị kết quả phân tích theo chuẩn
    - [Phương pháp 5: Chiếu Homography lên sân Radar 2D (MiniCourt Projection)](#phương-pháp-5-chiếu-homography-lên-sân-radar-2d-minicourt-projection)
    - [Phương pháp 6: Tính toán chỉ số vật lý & Tốc độ thi đấu (Match Analytics)](#phương-pháp-6-tính-toán-chỉ-số-vật-lý--tốc-độ-thi-đấu-match-analytics)
    - [Phương pháp 7: Trợ lý Trọng tài Hawk-Eye ELC & Phán quyết Ăn điểm (Referee & Point Decision)](#phương-pháp-7-trợ-lý-trọng-tài-hawk-eye-elc--phán-quyết-ăn-điểm-referee--point-decision)
+   - [Phương pháp 8: Phân tích Hậu Trận Đấu & Xuất Dữ liệu Đa Phương thức (Post-Match Analytics & Exporter)](#phương-pháp-8-phân-tích-hậu-trận-đấu--xuất-dữ-liệu-đa-phương-thức-post-match-analytics--exporter)
 3. [Tải về Dữ liệu & Trọng số mô hình (Downloads: Datasets & Weights)](#-tải-về-dữ-liệu--trọng-số-mô-hình-downloads-datasets--weights)
 4. [Hướng dẫn sử dụng nhanh (Quick Start)](#-hướng-dẫn-sử-dụng-nhanh-quick-start)
 5. [Tập dữ liệu & Huấn luyện mô hình (Training & Datasets)](#-tập-dữ-liệu--huấn-luyện-mô-hình-training--datasets)
@@ -51,6 +52,7 @@ Hệ thống được thiết kế theo kiến trúc phân tách độc lập (M
 | **MiniCourt** | Perspective Homography Transform ($3 \times 3$) + Anti-Snap Trajectory | Ánh xạ tọa độ từ video phối cảnh sang 2D chuẩn quốc tế, nội suy quỹ đạo 2 giai đoạn tự nhiên, chống giật lưới |
 | **Referee System** | **CatBoost ML Model** (`models/bounce_model.cbm`) + ITF Line Calling | Tự động phát hiện điểm tiếp đất $Z \approx 0$ bằng ML CatBoost, đo khoảng cách mép vạch (cm), phân định 3 kịch bản WINNER IN / OUT / NET ERROR |
 | **Match Analytics** | Physical Kinematics Modeling | Đo tốc độ cú đánh (km/h), tốc độ di chuyển tuyển thủ (km/h), đếm cú đánh |
+| **Post-Match Analytics** | Modular Kinematics + KDE Heatmap + Tactical Zones | Phân tích chuyên sâu sau trận, tính 3 vùng sân chiến thuật, trích xuất dữ liệu có cấu trúc (JSON, CSV) và bộ 8 ảnh biểu đồ 2D (Heatmaps, Trajectories, Bounces, Zones, Speed timeline) vào thư mục `match_analytics/` |
 
 ---
 
@@ -333,6 +335,49 @@ Hệ thống đóng vai trò như một tổ VAR / Hawk-Eye Electronic Line Call
 
 ---
 
+### Phương pháp 8: Phân tích Hậu Trận Đấu & Xuất Dữ liệu Đa Phương thức (Post-Match Analytics & Exporter)
+Trực thuộc module [`analysis/`](analysis/) với kiến trúc Module hóa sạch (*Single Responsibility Principle & Facade Pattern*):
+Hệ thống không chỉ render video với Mini-Court và telemetry trực tiếp trên màn hình, mà còn tự động trích xuất toàn bộ dữ liệu thống kê chuyên sâu và bộ 8 ảnh biểu đồ đồ họa cao cấp (300 DPI) vào thư mục riêng `match_analytics/<tên_video>/` phục vụ phân tích kỹ chiến thuật sau trận và sẵn sàng tích hợp lên các nền tảng Web Dashboard:
+
+#### 1. Kiến trúc phân rã module trong `analysis/`:
+- [`analysis/court_geometry.py`](analysis/court_geometry.py): Quản lý kích thước sân chuẩn mét (ATP), chuyển đổi 2 chiều giữa Pixel Mini-Court $\leftrightarrow$ Mét thực tế ($[-5.485, 5.485]\text{ m}$ ngang, $[-11.885, 11.885]\text{ m}$ dọc), phân loại 3 vùng sân chiến thuật và độ sâu bóng.
+- [`analysis/player_metrics.py`](analysis/player_metrics.py): Tính quãng đường di chuyển tổng thể (lọc rung sensor $< 2\text{cm}$), vận tốc chạy tức thời (km/h) được làm mịn bằng rolling window, tốc độ bứt tốc tối đa, tỷ lệ thời gian thi đấu tại 3 vùng sân và xu hướng di chuyển ngang (Ad Court vs Center vs Deuce Court).
+- [`analysis/ball_shot_metrics.py`](analysis/ball_shot_metrics.py): Bám vết bóng theo thời gian thực; chuẩn hóa sự kiện bóng nảy sân (Hawk-Eye ELC); phân tích chi tiết từng cú đánh trong rally (*Người đánh, Tốc độ bay physics-informed, Hướng đánh, Độ sâu, Trạng thái IN/OUT, Độ lệch vạch cm, Kết quả Winner/Error*) và tổng hợp từ điển KPIs.
+- [`analysis/data_exporter.py`](analysis/data_exporter.py): Quản lý việc ghi toàn bộ dữ liệu có cấu trúc ra đĩa: `summary_kpis.json`, `shots_detail.csv`, `player_tracking.csv`, `ball_tracking.csv`, `bounces.json`.
+- [`analysis/visualizer.py`](analysis/visualizer.py): Bộ engine đồ họa chuyên biệt bằng Matplotlib (300 DPI):
+  - Bản đồ sân 2D chuẩn ATP với Dark Theme sang trọng.
+  - 3 Bản đồ nhiệt di chuyển (Heatmaps): Player 1 (Neon Cyan), Player 2 (Vivid Amber/Orange), Dual View (Đối chiếu cả 2).
+  - Biểu đồ phân bổ % thời gian tại 3 vùng sân chiến thuật (*Baseline, No-Man's Land, Attack Zone*).
+  - Bản đồ phân bố điểm nảy bóng Hawk-Eye (vòng tròn xanh cho IN kèm khoảng cách tới vạch, vòng đỏ cho OUT, hào quang dứt điểm Winner).
+  - Vector quỹ đạo đường bóng 2D từ người đánh đến điểm nảy, mã hóa màu theo dải tốc độ.
+  - Biểu đồ tiến trình vận tốc bóng và đường cong tốc độ chạy nước rút của 2 đấu thủ qua từng thời điểm.
+  - Thẻ Infographic tổng hợp toàn diện pha bóng (Broadcast Match Summary Card).
+- [`analysis/match_analyzer.py`](analysis/match_analyzer.py): Lớp điều phối chính (Facade Orchestrator) liên kết toàn bộ pipeline, giữ 100% tính tương thích ngược với [`main.py`](main.py) và hỗ trợ chạy dòng lệnh độc lập (CLI).
+
+#### 2. Cấu trúc thư mục dữ liệu xuất ra (`match_analytics/<tên_video>/`):
+Mỗi khi chạy phân tích video, hệ thống tự động xuất trọn bộ 13 file phân tích:
+- **Dữ liệu có cấu trúc (Structured Data)**:
+  - `summary_kpis.json`: Điểm số, người thắng, phán quyết Hawk-Eye ELC, tổng số cú đánh, tốc độ tối đa/trung bình, quãng đường chạy và % vùng sân của từng đấu thủ.
+  - `shots_detail.csv`: Bảng dữ liệu từng cú đánh trong rally (Cú đánh #, Người đánh, Vận tốc km/h, Tọa độ đánh, Tọa độ nảy, Hướng đánh, Độ sâu, IN/OUT, Độ lệch cm, Kết quả).
+  - `player_tracking.csv`: Bảng tọa độ theo mét thực tế và tốc độ chạy tức thời của 2 đấu thủ theo từng frame.
+  - `ball_tracking.csv`: Tọa độ bóng trên camera và trên mặt sân 2D theo thời gian thực.
+  - `bounces.json`: Chi tiết toàn bộ các điểm nảy bóng trong rally (khung hình, trạng thái IN/OUT, khoảng cách vạch).
+- **Bộ ảnh biểu đồ đồ họa 300 DPI**:
+  - `heatmap_combined.png`, `heatmap_player_1.png`, `heatmap_player_2.png`
+  - `court_zones_distribution.png`
+  - `ball_bounce_dispersion.png`
+  - `ball_trajectories_2d.png`
+  - `speed_and_distance_timeline.png`
+  - `match_summary_dashboard.png`
+
+#### 3. Chạy độc lập trích xuất nhanh từ cache (Fast Standalone CLI):
+Ngoài việc tự động xuất dữ liệu khi chạy `python main.py`, bạn có thể chạy trích xuất dữ liệu và sinh toàn bộ biểu đồ chỉ trong ~2–3 giây từ cache mà không cần render lại video MP4 nặng:
+```powershell
+python analysis/match_analyzer.py --video input_video_2
+```
+
+---
+
 ## 📥 Tải về Dữ liệu & Trọng số mô hình (Downloads: Datasets & Weights)
 
 Để thuận tiện cho việc chạy thử nghiệm ngay lập tức hoặc huấn luyện lại các mô hình AI từ đầu, toàn bộ file trọng số mô hình (**Model Weights**) và tập dữ liệu (**Datasets**) đã được lưu trữ sẵn trên Google Drive:
@@ -501,6 +546,18 @@ tennis_analysis-main/
 │   ├── conversions.py             # Chuyển đổi Pixel sang Mét
 │   ├── player_stats_drawer_utils.py # Vẽ bảng thống kê tốc độ thi đấu
 │   └── cut_video_clips.py         # Cắt clip từ video trận đấu đầy đủ
+│
+├── analysis/                      # ⭐ Module phân tích hậu trận đấu chuyên sâu (Post-Match Analytics)
+│   ├── __init__.py                # Package exports
+│   ├── court_geometry.py          # Hệ tọa độ & hình học sân tennis chuẩn ATP
+│   ├── player_metrics.py          # Tính toán thể lực, quãng đường & 3 vùng sân cầu thủ
+│   ├── ball_shot_metrics.py       # Phân tích vết bóng, điểm nảy Hawk-Eye & từng cú đánh
+│   ├── data_exporter.py           # Quản lý xuất dữ liệu cấu trúc (JSON, CSV)
+│   ├── visualizer.py              # Engine đồ họa vẽ bản đồ nhiệt 2D & biểu đồ (PNG)
+│   └── match_analyzer.py          # Lớp điều phối chính (Facade Orchestrator) & CLI Runner
+│
+├── match_analytics/               # 📊 Thư mục chứa dữ liệu JSON/CSV và ảnh đồ họa sau trận
+│   └── <tên_video>/               # Ví dụ: input_video_2/ (13 file dữ liệu & biểu đồ)
 │
 ├── input_videos/                  # Video đầu vào
 │   └── new_input/clips/           # Các clip tình huống bóng mẫu (Nadal, Murray, Monfils,...)

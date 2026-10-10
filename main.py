@@ -422,6 +422,30 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
             ball_shot_frames=ball_shot_frames
         )
 
+    # 9.6 Post-Match Analytics & Multi-Modal Exporter (Dedicated analytics folder)
+    analytics_cfg = cfg.get("analytics", {})
+    if analytics_cfg.get("enabled", True):
+        from analysis.match_analyzer import MatchAnalyzer
+        analyzer = MatchAnalyzer(
+            mini_court=mini_court,
+            video_fps=video_fps,
+            video_stem=video_stem,
+            export_dir=analytics_cfg.get("export_dir", "match_analytics"),
+            generate_visuals=analytics_cfg.get("generate_visuals", True),
+            dpi=analytics_cfg.get("dpi", 200)
+        )
+        analyzer.analyze_and_export(
+            player_detections=player_detections,
+            player_mini_court_detections=player_mini_court_detections,
+            ball_detections=ball_detections,
+            ball_mini_court_detections=ball_mini_court_detections,
+            court_keypoints=court_keypoints,
+            ball_shot_frames=ball_shot_frames,
+            player_stats_data_df=player_stats_data_df,
+            decision_info=decision_info,
+            all_bounces=referee_system.all_bounces if referee_system is not None else []
+        )
+
     # 10. Render Outputs
     print("Drawing detections and visualizations...")
     vis_cfg = cfg.get("visualization", {})
