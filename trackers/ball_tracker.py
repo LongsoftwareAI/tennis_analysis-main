@@ -5,6 +5,12 @@ from itertools import islice
 import numpy as np
 import pandas as pd
 
+try:
+    from scipy.signal import savgol_filter
+    HAS_SAVGOL = True
+except ImportError:
+    HAS_SAVGOL = False
+
 class BallTracker:
     """
     Tennis Ball Tracker supporting pure TensorFlow (SavedModel, TFLite) 
@@ -135,37 +141,57 @@ class BallTracker:
         cy = (sub_py / float(target_h)) * orig_h
         return cx, cy, float(local_max)
 
-    def interpolate_ball_positions(self, ball_positions, player_positions=None):
+    def interpolate_ball_positions(self, ball_positions, player_positions=None, frame_shape=None):
         """
-        Clean erratic teleportation noise, suppress court-edge/shoe artifacts,
+        Clean erratic teleportation noise, suppress court-edge/shoe artifacts with resolution-adaptive scaling,
         apply Physics-Informed Ballistic Parabolic Fitting for airborne high lobs,
-        and perform physically-constrained linear interpolation for short occlusions.
+        perform adaptive local parabolic interpolation across short occlusions (up to 6 frames),
+        and apply flight-arc kinematic trajectory smoothing (Savitzky-Golay / Moving Window) to eliminate micro-jitter.
         """
-        ball_positions_list = [x.get(1, []) if (1 in x and len(x[1]) == 4) else [np.nan, np.nan, np.nan, np.nan] for x in ball_positions]
+        n = len(ball_positions)
+        if n == 0:
+            return []
+
+        # Resolution-adaptive scaling factors
+        if frame_shape is not None:
+            h_v, w_v = frame_shape[:2]
+        else:
+            valid_xs = [b[1][2] for b in ball_positions if isinstance(b, dict) and 1 in b and len(b[1]) == 4 and not np.isnan(b[1][0])]
+            valid_ys = [b[1][3] for b in ball_positions if isinstance(b, dict) and 1 in b and len(b[1]) == 4 and not np.isnan(b[1][0])]
+            if valid_xs and (max(valid_xs) > 1350 or max(valid_ys) > 780):
+                w_v, h_v = 1920.0, 1080.0
+            elif valid_xs and (max(valid_xs) > 900 or max(valid_ys) > 500):
+                w_v, h_v = 1280.0, 720.0
+            else:
+                w_v, h_v = 1920.0, 1080.0
+
+        sx = float(w_v) / 1920.0
+        sy = float(h_v) / 1080.0
+
+        ball_positions_list = [x.get(1, []) if (isinstance(x, dict) and 1 in x and len(x[1]) == 4) else [np.nan, np.nan, np.nan, np.nan] for x in ball_positions]
         df_ball_positions = pd.DataFrame(ball_positions_list, columns=['x1', 'y1', 'x2', 'y2'])
-        n = len(df_ball_positions)
 
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
         mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
 
-        # 1. Height filter: reject detections high in stadium roof/audience outside central court corridor
+        # 1. Height & Stadium Roof filter (resolution-adaptive)
         for i in range(n):
             if pd.notna(mid_y.iloc[i]):
-                if mid_y.iloc[i] < 35.0 or (mid_y.iloc[i] < 120.0 and (mid_x.iloc[i] < 320.0 or mid_x.iloc[i] > 1600.0)):
+                if mid_y.iloc[i] < 35.0 * sy or (mid_y.iloc[i] < 120.0 * sy and (mid_x.iloc[i] < 320.0 * sx or mid_x.iloc[i] > 1600.0 * sx)):
                     df_ball_positions.iloc[i] = [np.nan, np.nan, np.nan, np.nan]
 
         # 1.5. Suppress stationary/slow false detections at bottom floor corners (player shoes / baseline lines)
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
         mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
         for i in range(n):
-            if pd.notna(mid_y.iloc[i]) and mid_y.iloc[i] > 890.0:
-                if mid_x.iloc[i] < 260.0 or mid_x.iloc[i] > 1660.0:
+            if pd.notna(mid_y.iloc[i]) and mid_y.iloc[i] > 890.0 * sy:
+                if mid_x.iloc[i] < 260.0 * sx or mid_x.iloc[i] > 1660.0 * sx:
                     is_slow = True
                     for offset in (-2, -1, 1, 2):
                         chk = i + offset
                         if 0 <= chk < n and pd.notna(mid_x.iloc[chk]):
                             spd = np.hypot(mid_x.iloc[i] - mid_x.iloc[chk], mid_y.iloc[i] - mid_y.iloc[chk]) / abs(offset)
-                            if spd > 12.0:
+                            if spd > 12.0 * sx:
                                 is_slow = False
                                 break
                     if is_slow:
@@ -187,8 +213,7 @@ class BallTracker:
                 last_f, last_pt = curr[-1]
                 dt = i - last_f
                 dist = np.linalg.norm(pt - last_pt)
-                # Maximum physical speed of a tennis ball in 25-50fps broadcast is ~65 px/frame
-                if dt <= 3 and (dist / dt) <= 65.0:
+                if dt <= 3 and (dist / dt) <= 65.0 * max(sx, sy):
                     curr.append((i, pt))
                 else:
                     tracklets.append(curr)
@@ -196,16 +221,14 @@ class BallTracker:
         if curr:
             tracklets.append(curr)
 
-        # Eliminate short isolated noise bursts (single frames or stationary 2-frame noise)
         rejected_count = 0
         for tr in tracklets:
             if len(tr) == 1:
                 df_ball_positions.iloc[tr[0][0]] = [np.nan, np.nan, np.nan, np.nan]
                 rejected_count += 1
             elif len(tr) == 2:
-                # If essentially stationary / noise (distance < 5 px)
                 d = np.linalg.norm(tr[1][1] - tr[0][1])
-                if d < 5.0:
+                if d < 4.5 * max(sx, sy):
                     for f_idx, pt in tr:
                         df_ball_positions.iloc[f_idx] = [np.nan, np.nan, np.nan, np.nan]
                         rejected_count += 1
@@ -232,10 +255,9 @@ class BallTracker:
                     if len(pts_pre) >= 2 and len(pts_post) >= 2:
                         vy_pre = (pts_pre[-1][1] - pts_pre[0][1]) / float(len(pts_pre) - 1)
                         vy_post = (pts_post[-1][1] - pts_post[0][1]) / float(len(pts_post) - 1)
-                        if vy_pre <= -4.0 and vy_post >= 4.0:
+                        if vy_pre <= -4.0 * sy and vy_post >= 4.0 * sy:
                             xA, yA = pts_pre[-1]
                             xB, yB = pts_post[0]
-                            # Detect if an overhead smash struck at the net near f_B
                             f_smash = max(f_A + 10, f_B - 9)
                             x_smash = None
                             y_smash = None
@@ -244,28 +266,26 @@ class BallTracker:
                                 for p_cand_id in (2, 4, 1):
                                     if p_cand_id in p_dict and len(p_dict[p_cand_id]) == 4:
                                         pb = p_dict[p_cand_id]
-                                        if (pb[1] + pb[3]) / 2.0 < 450.0:
+                                        if (pb[1] + pb[3]) / 2.0 < 450.0 * sy:
                                             x_smash = (pb[0] + pb[2]) / 2.0
-                                            y_smash = pb[1] - 15.0
+                                            y_smash = pb[1] - 15.0 * sy
                                             break
                             if x_smash is None:
                                 vx_post = (pts_post[-1][0] - pts_post[0][0]) / float(len(pts_post) - 1)
                                 dt_back = float(f_B - f_smash)
                                 x_smash = xB - vx_post * dt_back
-                                y_smash = max(60.0, yB - vy_post * dt_back)
+                                y_smash = max(60.0 * sy, yB - vy_post * dt_back)
 
-                            # Parabolic arc for lob: f_A -> f_smash
                             t_lob = f_smash - f_A
                             if t_lob > 0:
                                 for t in range(1, t_lob):
                                     f = f_A + t
                                     alpha = t / float(t_lob)
                                     x = xA + alpha * (x_smash - xA)
-                                    v0 = min(-12.0, vy_pre)
+                                    v0 = min(-12.0 * sy, vy_pre)
                                     a = 2.0 * (y_smash - yA - v0 * t_lob) / (t_lob ** 2)
                                     y = yA + v0 * t + 0.5 * a * (t ** 2)
                                     df_ball_positions.iloc[f] = [x - 9.0, y - 9.0, x + 9.0, y + 9.0]
-                            # Linear descent for smash: f_smash -> f_B
                             t_sm = f_B - f_smash
                             if t_sm > 0:
                                 for t in range(0, t_sm):
@@ -279,10 +299,58 @@ class BallTracker:
             else:
                 gap_idx += 1
 
-        # 3. Controlled linear interpolation: ONLY bridge short occlusion gaps (max 3 frames ~ 0.12s)
-        df_ball_positions = df_ball_positions.interpolate(method='linear', limit=3)
+        # 3. Smart Adaptive Parabolic / Kinematic Interpolation for Gaps <= 6 frames
+        mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
+        mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
+        is_nan = mid_x.isna().to_numpy()
 
-        # 4. Final velocity gate: eliminate any remaining jump artifact (> 70 px/frame)
+        if np.any(is_nan) and not np.all(is_nan):
+            padded = np.concatenate(([False], is_nan, [False]))
+            starts = np.where(padded[1:] & ~padded[:-1])[0]
+            ends = np.where(~padded[1:] & padded[:-1])[0]
+            valid_indices = np.where(~is_nan)[0]
+
+            for s, e in zip(starts, ends):
+                gap_len = e - s
+                if gap_len <= 6 and s > 0 and e < n:
+                    left_anchors = valid_indices[(valid_indices < s) & (valid_indices >= s - 6)][-4:]
+                    right_anchors = valid_indices[(valid_indices >= e) & (valid_indices <= e + 6)][:4]
+                    target_t = np.arange(s, e, dtype=np.float64)
+
+                    if len(left_anchors) >= 2 and len(right_anchors) >= 2:
+                        anchors = np.concatenate((left_anchors, right_anchors))
+                        t_anch = anchors.astype(np.float64)
+                        t0 = t_anch.mean()
+                        dt = target_t - t0
+                        pts_anch = np.column_stack([mid_x.iloc[anchors].values, mid_y.iloc[anchors].values])
+                        coeffs = np.polyfit(t_anch - t0, pts_anch, deg=2)
+                        pred = (coeffs[0:1] * (dt[:, None] ** 2)) + (coeffs[1:2] * dt[:, None]) + coeffs[2:3]
+
+                        i0, i1 = left_anchors[-1], right_anchors[0]
+                        p0 = np.array([mid_x.iloc[i0], mid_y.iloc[i0]])
+                        p1 = np.array([mid_x.iloc[i1], mid_y.iloc[i1]])
+                        w = ((target_t - i0) / float(i1 - i0))[:, None]
+                        lin = p0 * (1.0 - w) + p1 * w
+
+                        if np.max(np.abs(pred - lin)) < 40.0 * sy:
+                            for idx_rel, f_fill in enumerate(range(s, e)):
+                                cx, cy = pred[idx_rel]
+                                df_ball_positions.iloc[f_fill] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
+                        else:
+                            for idx_rel, f_fill in enumerate(range(s, e)):
+                                cx, cy = lin[idx_rel]
+                                df_ball_positions.iloc[f_fill] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
+                    elif len(left_anchors) >= 1 and len(right_anchors) >= 1:
+                        i0, i1 = left_anchors[-1], right_anchors[0]
+                        p0 = np.array([mid_x.iloc[i0], mid_y.iloc[i0]])
+                        p1 = np.array([mid_x.iloc[i1], mid_y.iloc[i1]])
+                        for f_fill in range(s, e):
+                            w = (f_fill - i0) / float(i1 - i0)
+                            cx = p0[0] * (1.0 - w) + p1[0] * w
+                            cy = p0[1] * (1.0 - w) + p1[1] * w
+                            df_ball_positions.iloc[f_fill] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
+
+        # 4. Final velocity gate: eliminate any remaining jump artifact
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
         mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
         prev_valid_f = None
@@ -293,11 +361,59 @@ class BallTracker:
                 if prev_valid_pt is not None:
                     dt = i - prev_valid_f
                     dist = np.linalg.norm(pt - prev_valid_pt)
-                    if (dist / dt) > 70.0:
+                    if (dist / dt) > 75.0 * max(sx, sy):
                         df_ball_positions.iloc[i] = [np.nan, np.nan, np.nan, np.nan]
                         continue
                 prev_valid_f = i
                 prev_valid_pt = pt
+
+        # 5. Kinematic Flight-Arc Smoothing (Savitzky-Golay / Moving Window)
+        mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
+        mid_y = (df_ball_positions['y1'] + df_ball_positions['y2']) / 2.0
+        valid_mask = mid_x.notna().to_numpy()
+
+        padded_valid = np.concatenate(([False], valid_mask, [False]))
+        seg_starts = np.where(padded_valid[1:] & ~padded_valid[:-1])[0]
+        seg_ends = np.where(~padded_valid[1:] & padded_valid[:-1])[0]
+
+        for ss, ee in zip(seg_starts, seg_ends):
+            seg_len = ee - ss
+            if seg_len >= 5:
+                x_seg = mid_x.iloc[ss:ee].values.copy()
+                y_seg = mid_y.iloc[ss:ee].values.copy()
+
+                # Find bounce/hit inflections inside segment to preserve sharp contact reversals
+                vy = np.diff(y_seg)
+                reversals = [0]
+                for k in range(1, len(vy) - 1):
+                    if vy[k - 1] * vy[k + 1] < 0 and abs(vy[k + 1] - vy[k - 1]) > 8.0 * sy:
+                        reversals.append(k + 1)
+                reversals.append(seg_len)
+
+                # Smooth each sub-arc
+                for r_idx in range(len(reversals) - 1):
+                    sub_s = reversals[r_idx]
+                    sub_e = reversals[r_idx + 1]
+                    sub_len = sub_e - sub_s
+                    if sub_len >= 5:
+                        win = sub_len if (sub_len % 2 == 1) else (sub_len - 1)
+                        win = min(win, 7)
+                        if HAS_SAVGOL and win >= 5:
+                            x_smooth = savgol_filter(x_seg[sub_s:sub_e], window_length=win, polyorder=2)
+                            y_smooth = savgol_filter(y_seg[sub_s:sub_e], window_length=win, polyorder=2)
+                        else:
+                            kernel = np.array([0.2, 0.6, 0.2])
+                            x_smooth = np.convolve(x_seg[sub_s:sub_e], kernel, mode='same')
+                            y_smooth = np.convolve(y_seg[sub_s:sub_e], kernel, mode='same')
+                            x_smooth[0] = x_seg[sub_s]
+                            x_smooth[-1] = x_seg[sub_e - 1]
+                            y_smooth[0] = y_seg[sub_s]
+                            y_smooth[-1] = y_seg[sub_e - 1]
+
+                        for rel_i, global_f in enumerate(range(ss + sub_s, ss + sub_e)):
+                            cx = x_smooth[rel_i]
+                            cy = y_smooth[rel_i]
+                            df_ball_positions.iloc[global_f] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
 
         # Normalize bounding box around center (cx, cy)
         mid_x = (df_ball_positions['x1'] + df_ball_positions['x2']) / 2.0
@@ -1073,10 +1189,9 @@ class BallTracker:
                         idx2, p2 = pts[k + 1]
                         dt = idx2 - idx1
                         dist = np.hypot(p2[0] - p1[0], p2[1] - p1[1])
-                        # Only connect close consecutive frames with physical tennis speed (dist <= 65px * dt and dist >= 1.5px)
-                        # Never draw a jump or streak if the ball teleports or was dropped
-                        if dt <= 2 and dist <= 65.0 * dt and dist >= 1.5:
-                            progress = (k + 1) / len(pts)
+                        # Allow connecting up to dt <= 3 across small gaps without flickering
+                        if dt <= 3 and dist <= 75.0 * dt and dist >= 1.0:
+                            progress = (k + 1) / float(len(pts))
                             thickness = max(2, int(progress * 5))
                             # Vibrant tennis yellow gradient: (B, G, R)
                             b_val = int(35 + 200 * progress)
@@ -1085,16 +1200,24 @@ class BallTracker:
                             color = (b_val, g_val, r_val)
                             cv2.line(frame, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), color, thickness, cv2.LINE_AA)
 
-                    # 2. Draw glowing halo and solid core at current ball position
+                    # 2. Draw glowing halo and solid core at current ball position (Fast local ROI blending)
                     if ball_history[f_idx] is not None:
                         curr_pt = ball_history[f_idx]
                         cx, cy = int(curr_pt[0]), int(curr_pt[1])
 
-                        # Semi-transparent glowing halo
-                        overlay = frame.copy()
-                        cv2.circle(overlay, (cx, cy), 11, (0, 255, 255), -1, cv2.LINE_AA)
-                        cv2.circle(overlay, (cx, cy), 6, (255, 255, 255), -1, cv2.LINE_AA)
-                        cv2.addWeighted(overlay, 0.40, frame, 0.60, 0, frame)
+                        h_f, w_f = frame.shape[:2]
+                        rad = 14
+                        x1 = max(0, cx - rad)
+                        y1 = max(0, cy - rad)
+                        x2 = min(w_f, cx + rad + 1)
+                        y2 = min(h_f, cy + rad + 1)
+
+                        if x2 > x1 and y2 > y1:
+                            roi = frame[y1:y2, x1:x2]
+                            overlay = roi.copy()
+                            cv2.circle(overlay, (cx - x1, cy - y1), 11, (0, 255, 255), -1, cv2.LINE_AA)
+                            cv2.circle(overlay, (cx - x1, cy - y1), 6, (255, 255, 255), -1, cv2.LINE_AA)
+                            cv2.addWeighted(overlay, 0.40, roi, 0.60, 0, roi)
 
                         # Crisp inner core
                         cv2.circle(frame, (cx, cy), 5, (0, 255, 255), -1, cv2.LINE_AA)
