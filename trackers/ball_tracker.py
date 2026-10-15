@@ -749,39 +749,63 @@ class BallTracker:
         if self.backend == 'tracknet_torch':
             print(f"[BallTracker] Running TrackNet PyTorch triplet inference on {self.device_str}...")
             import torch
-            frames_list = list(frames)
-            total_frames = len(frames_list)
-            if total_frames == 0:
+            frame_iter = iter(frames)
+            first_frame = next(frame_iter, None)
+            if first_frame is None:
                 return []
 
-            orig_h, orig_w = frames_list[0].shape[:2]
+            orig_h, orig_w = first_frame.shape[:2]
             target_h, target_w = self.target_size
-            tracked_boxes = [None] * total_frames
-
-            # Pre-resize all frames to 640x360 normalized float32
-            resized_frames = []
-            for f in frames_list:
-                r_img = cv2.resize(f, (target_w, target_h), interpolation=cv2.INTER_LINEAR).astype(np.float32) / 255.0
-                resized_frames.append(r_img)
+            tracked_boxes = []
+            missing_frames = {}
 
             infer_batch_size = max(1, min(4, batch_size if batch_size > 1 else 2))
-            num_batches = (total_frames + infer_batch_size - 1) // infer_batch_size
 
-            for b in range(num_batches):
-                start_i = b * infer_batch_size
-                end_i = min(total_frames, (b + 1) * infer_batch_size)
-                cur_b_size = end_i - start_i
+            def resize_frame(frame):
+                return cv2.resize(
+                    frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR
+                ).astype(np.float32) / 255.0
+
+            def triplet_stream():
+                """Yield temporal triplets while retaining at most three source frames."""
+                previous_resized = None
+                current_frame = first_frame
+                current_resized = resize_frame(current_frame)
+                following_frame = next(frame_iter, None)
+                following_resized = (
+                    resize_frame(following_frame)
+                    if following_frame is not None
+                    else current_resized
+                )
+
+                while True:
+                    yield (
+                        np.concatenate([
+                            previous_resized if previous_resized is not None else current_resized,
+                            current_resized,
+                            following_resized,
+                        ], axis=2),
+                        current_frame,
+                    )
+                    if following_frame is None:
+                        break
+
+                    previous_resized = current_resized
+                    current_frame = following_frame
+                    current_resized = following_resized
+                    following_frame = next(frame_iter, None)
+                    following_resized = (
+                        resize_frame(following_frame)
+                        if following_frame is not None
+                        else current_resized
+                    )
+
+            streamed_triplets = iter(triplet_stream())
+            while batch := list(islice(streamed_triplets, infer_batch_size)):
+                cur_b_size = len(batch)
 
                 triplets = np.zeros((cur_b_size, 9, target_h, target_w), dtype=np.float32)
-                for i_offset, f_idx in enumerate(range(start_i, end_i)):
-                    idx_p = max(0, f_idx - 1)
-                    idx_c = f_idx
-                    idx_n = min(total_frames - 1, f_idx + 1)
-                    stacked = np.concatenate([
-                        resized_frames[idx_p],
-                        resized_frames[idx_c],
-                        resized_frames[idx_n]
-                    ], axis=2)
+                for i_offset, (stacked, _) in enumerate(batch):
                     triplets[i_offset] = np.transpose(stacked, (2, 0, 1))
 
                 batch_tensor = torch.from_numpy(triplets).to(self.device_str)
@@ -791,7 +815,8 @@ class BallTracker:
                     del out
                     del batch_tensor
 
-                for i_offset, f_idx in enumerate(range(start_i, end_i)):
+                for i_offset, (_, source_frame) in enumerate(batch):
+                    f_idx = len(tracked_boxes)
                     pred_map = argmax_maps[i_offset]
                     max_conf = int(pred_map.max())
                     prev_box = tracked_boxes[f_idx - 1] if f_idx > 0 else None
@@ -803,18 +828,23 @@ class BallTracker:
                             prev_cx = (prev_box[0] + prev_box[2]) / 2.0
                             prev_cy = (prev_box[1] + prev_box[3]) / 2.0
                             if np.hypot(cx - prev_cx, cy - prev_cy) > 85.0:
-                                tracked_boxes[f_idx] = None
+                                tracked_boxes.append(None)
+                                if self.aux_yolo is not None:
+                                    missing_frames[f_idx] = source_frame
                                 continue
-                        tracked_boxes[f_idx] = [cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0]
+                        tracked_boxes.append([cx - 9.0, cy - 9.0, cx + 9.0, cy + 9.0])
                     else:
-                        tracked_boxes[f_idx] = None
+                        tracked_boxes.append(None)
+                        if self.aux_yolo is not None:
+                            missing_frames[f_idx] = source_frame
 
-                if self.device_str == 'cuda' and b % 10 == 0:
-                    torch.cuda.empty_cache()
+            total_frames = len(tracked_boxes)
 
             # Hybrid Fusion: Fill missing TrackNet frames via kinematic-gated auxiliary YOLO
             if self.aux_yolo is not None:
-                tracked_boxes = self._recover_missing_frames_with_yolo(frames_list, tracked_boxes, orig_w, orig_h)
+                tracked_boxes = self._recover_missing_frames_with_yolo(
+                    missing_frames, tracked_boxes, orig_w, orig_h
+                )
 
             detected_count = sum(1 for b in tracked_boxes if b is not None)
             print(f"[BallTracker] TrackNet PyTorch detected ball in {detected_count}/{total_frames} frames ({detected_count/total_frames*100:.1f}% raw detection rate).")
