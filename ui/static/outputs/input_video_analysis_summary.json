@@ -1,0 +1,111 @@
+{
+  "input_video": "input_videos/input_video.mp4",
+  "output_video": "D:\\FPT\\semester 7\\tennis_analysis-main\\ui\\static\\outputs\\input_video_analysis.avi",
+  "frames": 214,
+  "analyzed_frames": 214,
+  "segments": [
+    [
+      0,
+      214
+    ]
+  ],
+  "fps": 30.0,
+  "ball": {
+    "detected_frames": 208,
+    "detection_rate": 0.972,
+    "longest_missing_run_frames": 3,
+    "shot_frames": [
+      12,
+      59,
+      96,
+      133,
+      183
+    ]
+  },
+  "referee_decision": {
+    "final_shot_frame": 183,
+    "landing_frame": 202,
+    "bounce_frame": 202,
+    "hitter_id": 1,
+    "receiver_id": 2,
+    "decision": "IN",
+    "type": "WINNER_IN",
+    "margin_cm": 55.6075706845246,
+    "nearest_line": "Left Sideline (Bien trai)",
+    "point_winner": 1,
+    "verdict_text": "DIEM CHO PLAYER 1 (Winner)",
+    "reason_text": "Player 1 an diem Winner (Passing shot trong san +55.6 cm)",
+    "scoring_action": "AN DIEM WINNER (PASSING SHOT)",
+    "landing_pos_mini": [
+      1813.12890625,
+      129.8912353515625
+    ],
+    "first_bounce_pos": [
+      1813.12890625,
+      129.8912353515625
+    ],
+    "second_bounce_pos": [
+      1793.12890625,
+      52.0
+    ],
+    "second_bounce_frame": 213,
+    "camera_land_pos": [
+      1212.0,
+      351.0
+    ],
+    "is_first_bounce_in": true,
+    "flight_duration_sec": 0.7916666666666666
+  },
+  "final_player_stats": {
+    "frame_num": 213.0,
+    "player_1_number_of_shots": 3.0,
+    "player_1_total_shot_speed": 239.51722466322735,
+    "player_1_last_shot_speed": 74.32987548367183,
+    "player_1_total_player_speed": 19.50510052257201,
+    "player_1_last_player_speed": 12.569483307170223,
+    "player_2_number_of_shots": 2.0,
+    "player_2_total_shot_speed": 172.3952362564131,
+    "player_2_last_shot_speed": 85.17105912641239,
+    "player_2_total_player_speed": 22.519699983275657,
+    "player_2_last_player_speed": 1.1667715262276788,
+    "player_3_number_of_shots": 0.0,
+    "player_3_total_shot_speed": 0.0,
+    "player_3_last_shot_speed": 0.0,
+    "player_3_total_player_speed": 0.0,
+    "player_3_last_player_speed": 0.0,
+    "player_4_number_of_shots": 0.0,
+    "player_4_total_shot_speed": 0.0,
+    "player_4_last_shot_speed": 0.0,
+    "player_4_total_player_speed": 0.0,
+    "player_4_last_player_speed": 0.0,
+    "player_1_average_shot_speed": 79.83907488774246,
+    "player_1_average_player_speed": 9.752550261286006,
+    "player_2_average_shot_speed": 86.19761812820656,
+    "player_2_average_player_speed": 7.5065666610918855,
+    "player_3_average_shot_speed": 0.0,
+    "player_3_average_player_speed": 0.0,
+    "player_4_average_shot_speed": 0.0,
+    "player_4_average_player_speed": 0.0
+  },
+  "run_info": {
+    "models": {
+      "player_model": "models/yolo26s.pt",
+      "ball_model_tracknet": "models/tracknet_weights.pth",
+      "ball_model_yolo": "models/ball_detector_yolo26_best.pt",
+      "ball_model": "models/tracknet_weights.pth",
+      "court_model": "models/model_tennis_court_det.pt",
+      "bounce_model": "models/bounce_model.cbm"
+    },
+    "tracking": {
+      "device": "auto",
+      "court_mode": "cpv",
+      "ball_detector": "hybrid",
+      "match_mode": "auto",
+      "use_stubs": false,
+      "force_live": true,
+      "stubs_dir": "tracker_stubs",
+      "ball_batch_size": 4
+    },
+    "used_stub_cache": false
+  }
+}

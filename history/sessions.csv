@@ -1,0 +1,4 @@
+﻿session_id,saved_at,video_name,duration_sec,max_shot_kmh,distance_m,hits,decision,point_winner,nearest_line,margin_cm,landing_frame
+20261014_082835_956854,2026-10-14T08:28:55,input_video.mp4,7.13,86.1,30.7,5,IN,Player 1,,58.4,0
+20261014_093555_20634d,2026-10-14T09:37:24,input_video_1.mp4,21.62,86.3,41.5,10,NET,Player 1,,0.0,0
+20261014_150544_fa6364,2026-10-14T15:06:48,test.mp4,34.52,92.4,131.9,19,NET,Player 1,,0.0,0

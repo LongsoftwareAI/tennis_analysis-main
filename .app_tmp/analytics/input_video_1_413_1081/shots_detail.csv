@@ -1,0 +1,11 @@
+﻿shot_index,hit_frame,end_frame,flight_time_s,hitter,hitter_id,receiver,speed_kmh,hit_x_m,hit_y_m,bounce_x_m,bounce_y_m,direction,depth,status,margin_cm,result
+1,25,50,0.5,Player 2,2,Player 1,85.2,1.16,-10.5,0.0,8.4,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+2,50,82,0.64,Player 2,2,Player 1,71.0,1.32,-10.97,0.0,8.78,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+3,82,155,1.46,Player 1,1,Player 2,82.8,-3.37,12.65,1.64,-6.71,Crosscourt (Cheo san),Medium (Giua san),IN,247.2,In Play (Rally)
+4,155,213,1.16,Player 2,2,Player 1,84.2,2.91,-10.44,-3.39,8.91,Crosscourt (Cheo san),Medium (Giua san),IN,72.7,In Play (Rally)
+5,213,284,1.42,Player 1,1,Player 2,86.2,-4.07,12.65,2.56,-6.91,Crosscourt (Cheo san),Medium (Giua san),IN,155.7,In Play (Rally)
+6,284,344,1.2,Player 2,2,Player 1,84.7,3.97,-10.7,0.0,8.56,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+7,344,405,1.22,Player 1,1,Player 2,84.6,-2.7,12.65,1.57,-7.51,Crosscourt (Cheo san),Medium (Giua san),IN,254.3,In Play (Rally)
+8,405,466,1.22,Player 2,2,Player 1,84.7,2.13,-11.15,0.0,8.92,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+9,466,520,1.08,Player 1,1,Player 2,86.3,-2.91,12.65,0.0,-10.12,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+10,520,667,2.94,Player 2,2,Player 1,74.7,3.44,-11.27,0.93,-1.09,Center (Giua san),Short (Bong ngan),OUT,0.0,ERROR (NET)

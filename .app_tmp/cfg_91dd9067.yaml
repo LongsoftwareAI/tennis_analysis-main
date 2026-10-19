@@ -1,0 +1,38 @@
+analytics:
+  dpi: 200
+  enabled: true
+  export_dir: D:/FPT/semester 7/DAT301m/tennis_analysis-main/.app_tmp/analytics
+  generate_visuals: true
+models:
+  ball_model: models/tracknet_weights.pth
+  ball_model_tracknet: models/tracknet_weights.pth
+  ball_model_yolo: models/ball_detector_yolo26_best.pt
+  bounce_model: models/bounce_model.cbm
+  court_model: models/model_tennis_court_det.pt
+  player_model: models/yolo26s.pt
+players:
+  player1_name: Player 1
+  player2_name: Player 2
+tracking:
+  ball_batch_size: 4
+  ball_detector: hybrid
+  court_mode: cpv
+  device: auto
+  force_live: false
+  match_mode: auto
+  stubs_dir: tracker_stubs
+  use_stubs: true
+video:
+  input_path: input_videos/test.mp4
+  output_dir: D:\FPT\semester 7\DAT301m\tennis_analysis-main\ui\static\outputs
+  output_filename: test_analysis.avi
+visualization:
+  ball_effect: tracer
+  draw_ball: true
+  draw_court_keypoints: true
+  draw_frame_number: false
+  draw_mini_court: false
+  draw_players: true
+  draw_referee_decision: false
+  draw_stats: false
+  player_draw_mode: ellipse

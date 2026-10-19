@@ -1,0 +1,58 @@
+[
+  {
+    "bounce_index": 1,
+    "frame": 38,
+    "time_s": 1.27,
+    "shot_index": 1,
+    "court_side": "Far Court (Player 2)",
+    "x_m": -0.51,
+    "y_m": -10.58,
+    "is_in": true,
+    "status": "IN",
+    "depth_category": "Deep (Bong sau)",
+    "margin_cm": 360.4,
+    "is_final": false
+  },
+  {
+    "bounce_index": 2,
+    "frame": 83,
+    "time_s": 2.77,
+    "shot_index": 2,
+    "court_side": "Near Court (Player 1)",
+    "x_m": -2.45,
+    "y_m": 8.17,
+    "is_in": true,
+    "status": "IN",
+    "depth_category": "Medium (Giua san)",
+    "margin_cm": 166.4,
+    "is_final": false
+  },
+  {
+    "bounce_index": 3,
+    "frame": 169,
+    "time_s": 5.63,
+    "shot_index": 4,
+    "court_side": "Near Court (Player 1)",
+    "x_m": 1.99,
+    "y_m": 5.96,
+    "is_in": true,
+    "status": "IN",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 212.4,
+    "is_final": false
+  },
+  {
+    "bounce_index": 4,
+    "frame": 202,
+    "time_s": 6.73,
+    "shot_index": 5,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 3.53,
+    "y_m": -7.79,
+    "is_in": true,
+    "status": "IN",
+    "depth_category": "Medium (Giua san)",
+    "margin_cm": 58.4,
+    "is_final": true
+  }
+]

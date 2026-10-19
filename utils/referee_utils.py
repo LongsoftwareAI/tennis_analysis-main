@@ -238,6 +238,7 @@ class RefereeSystem:
 
         # 1. Identify the rally-ending shot
         final_shot_frame = ball_shot_frames[-1]
+        final_shot_idx = len(ball_shot_frames) - 1
 
         # 2. Determine Hitter and Receiver
         net_y = (mini_court.court_start_y + mini_court.court_end_y) / 2.0
