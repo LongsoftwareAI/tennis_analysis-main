@@ -29,7 +29,9 @@ class MiniCourtProjector:
             for i in range(14)
         ], dtype=np.float32)
 
-        h_mat, _ = cv2.findHomography(src_pts, dst_pts)
+        h_mat, _ = cv2.findHomography(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=5.0)
+        if h_mat is None:
+            h_mat, _ = cv2.findHomography(src_pts, dst_pts)
         return h_mat
 
     def project_players(self, player_boxes, h_matrices, is_dynamic, min_x, max_x, min_y, max_y):

@@ -99,32 +99,97 @@ def track_court_keypoints_cpv(
             return pickle.load(f)
 
     frames = iter(video_frames)
-    first_frame = next(frames, None)
-    if first_frame is None:
+    buffered_frames = []
+    # Buffer up to 40 frames (~1.3s) for robust initial anchor screening
+    for _ in range(40):
+        f = next(frames, None)
+        if f is None:
+            break
+        buffered_frames.append(f)
+
+    if not buffered_frames:
         return np.array([])
 
-    print("[CPV_CourtTracker] Running Homography Tracking with TrackNet Correction...")
-    t0 = time.time()
-
-    # 2. Khởi tạo Frame 0
-    if initial_keypoints is None:
-        if detector is None:
-            raise ValueError("[CPV_CourtTracker] Either initial_keypoints or detector must be provided.")
-        initial_keypoints = detector.predict(first_frame)
-
-    kps_0 = np.array(initial_keypoints, dtype=np.float32)
-    current_pts = np.array([(kps_0[2 * i], kps_0[2 * i + 1]) for i in range(14)], dtype=np.float32)
-
-    all_kps = [kps_0.copy()]
-
-    # 3. Giới hạn vùng tìm feature gần sân; đây là vùng xấp xỉ, không phải phân đoạn sân.
+    first_frame = buffered_frames[0]
     h, w = first_frame.shape[:2]
     court_mask = np.zeros((h, w), dtype=np.uint8)
     court_mask[int(h * 0.25):int(h * 0.95), int(w * 0.10):int(w * 0.90)] = 255
 
-    prev_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
+    print("[CPV_CourtTracker] Running Bi-directional Multi-frame Anchor Screening & Homography Tracking...")
+    t0 = time.time()
 
-    # Khởi tạo điểm đặc trưng ban đầu bằng Shi-Tomasi (Good Features to Track)
+    # 2. Khởi tạo Keyframe chuẩn xác nhất trong buffer
+    best_k = 0
+    best_pts = None
+    best_score = -np.inf
+
+    if initial_keypoints is not None:
+        kps_0 = np.array(initial_keypoints, dtype=np.float32)
+        best_pts = np.array([(kps_0[2 * i], kps_0[2 * i + 1]) for i in range(14)], dtype=np.float32)
+        best_score = court_line_contrast(cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY), best_pts)
+    elif detector is not None:
+        sample_indices = [i for i in range(0, len(buffered_frames), 5)]
+        for idx in sample_indices:
+            try:
+                cand_pts = np.asarray(detector.predict(buffered_frames[idx]), dtype=np.float32).reshape((-1, 2))
+                cand_gray = cv2.cvtColor(buffered_frames[idx], cv2.COLOR_BGR2GRAY)
+                cand_score = court_line_contrast(cand_gray, cand_pts)
+                if cand_score > best_score:
+                    best_score = cand_score
+                    best_k = idx
+                    best_pts = cand_pts
+            except Exception:
+                continue
+
+        if best_pts is None:
+            kps_0 = detector.predict(first_frame)
+            best_pts = np.asarray(kps_0, dtype=np.float32).reshape((-1, 2))
+            best_k = 0
+
+    print(f"[CPV_CourtTracker] Multi-frame Anchor Screening: Locked optimal Anchor at F{best_k} (contrast = {best_score:.2f}).")
+
+    # Bi-directional tracking on buffer
+    kps_buffer = [None] * len(buffered_frames)
+    kps_buffer[best_k] = best_pts.copy()
+
+    # Backwards tracking from best_k down to Frame 0
+    curr_pts = best_pts.copy()
+    for f in range(best_k - 1, -1, -1):
+        g_curr = cv2.cvtColor(buffered_frames[f + 1], cv2.COLOR_BGR2GRAY)
+        g_prev = cv2.cvtColor(buffered_frames[f], cv2.COLOR_BGR2GRAY)
+        p_feat = cv2.goodFeaturesToTrack(g_curr, maxCorners=250, qualityLevel=0.03, minDistance=15, mask=court_mask)
+        if p_feat is not None and len(p_feat) >= 10:
+            p_next, status, _ = cv2.calcOpticalFlowPyrLK(g_curr, g_prev, p_feat, None)
+            valid = (status.reshape(-1) == 1)
+            if valid.sum() >= 8:
+                H, _ = cv2.findHomography(p_feat.reshape(-1, 2)[valid], p_next.reshape(-1, 2)[valid], cv2.RANSAC)
+                if H is not None:
+                    curr_pts = cv2.perspectiveTransform(curr_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+        kps_buffer[f] = curr_pts.copy()
+
+    # Forward tracking from best_k to end of buffer
+    curr_pts = best_pts.copy()
+    for f in range(best_k + 1, len(buffered_frames)):
+        g_prev = cv2.cvtColor(buffered_frames[f - 1], cv2.COLOR_BGR2GRAY)
+        g_curr = cv2.cvtColor(buffered_frames[f], cv2.COLOR_BGR2GRAY)
+        p_feat = cv2.goodFeaturesToTrack(g_prev, maxCorners=250, qualityLevel=0.03, minDistance=15, mask=court_mask)
+        if p_feat is not None and len(p_feat) >= 10:
+            p_next, status, _ = cv2.calcOpticalFlowPyrLK(g_prev, g_curr, p_feat, None)
+            valid = (status.reshape(-1) == 1)
+            if valid.sum() >= 8:
+                H, _ = cv2.findHomography(p_feat.reshape(-1, 2)[valid], p_next.reshape(-1, 2)[valid], cv2.RANSAC)
+                if H is not None:
+                    curr_pts = cv2.perspectiveTransform(curr_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+        kps_buffer[f] = curr_pts.copy()
+
+    # Populate all_kps for buffered frames
+    all_kps = [kps_buffer[i].reshape(-1).copy() for i in range(len(buffered_frames))]
+
+    # Setup state for continuing forward tracking beyond buffer
+    last_frame = buffered_frames[-1]
+    prev_gray = cv2.cvtColor(last_frame, cv2.COLOR_BGR2GRAY)
+    current_pts = kps_buffer[-1].copy()
+    anchor_pts = current_pts.copy()
     prev_pts_features = cv2.goodFeaturesToTrack(
         prev_gray,
         maxCorners=250,
@@ -132,14 +197,13 @@ def track_court_keypoints_cpv(
         minDistance=15,
         mask=court_mask
     )
-    anchor_pts = current_pts.copy()
     anchor_pts_features = prev_pts_features.copy() if prev_pts_features is not None else None
     lost_frames = 0
-    last_redetection = 0
-    last_accepted_detection = 0
+    last_redetection = len(buffered_frames) - 1
+    last_accepted_detection = len(buffered_frames) - 1
 
-    # 4. Tracking liên tục qua từng frame bằng Lucas-Kanade Optical Flow + RANSAC Homography
-    for f_idx, frame in enumerate(frames, start=1):
+    # 4. Tracking liên tục qua từng frame còn lại
+    for f_idx, frame in enumerate(frames, start=len(buffered_frames)):
         curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         transform_applied = False
         camera_motion = 0.0
@@ -235,12 +299,14 @@ def track_court_keypoints_cpv(
                     )
                     if supported:
                         if disagreement > 1.0 and not recovery_redetection:
-                            # Spread a verified correction over recent frames instead of snapping now.
                             start = max(last_accepted_detection, f_idx - 60)
                             correction = (detected_points - current_pts).reshape(-1)
                             for index in range(start + 1, f_idx):
-                                fraction = (index - start) / (f_idx - start)
-                                all_kps[index] += correction * fraction
+                                if tracked_score >= 15.0:
+                                    fraction = (index - start) / float(f_idx - start)
+                                    all_kps[index] += correction * fraction
+                                else:
+                                    all_kps[index] += correction
                         current_pts = detected_points
                         lost_frames = 0
                         last_accepted_detection = f_idx

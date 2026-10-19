@@ -50,12 +50,20 @@ def save_video(output_video_frames, output_video_path, fps=24.0):
             print(f"[Warning] '{output_video_path}' is currently open in a media player. Saving instead to '{final_path}'")
 
     frames = iter(output_video_frames)
-    first_frame = next(frames)
+    first_frame = next(frames, None)
+    if first_frame is None:
+        print("[Warning] save_video received an empty frame sequence; skipping write.")
+        return None
+
+    h, w = first_frame.shape[:2]
+    os.makedirs(os.path.dirname(os.path.abspath(final_path)), exist_ok=True)
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(final_path, fourcc, fps, (first_frame.shape[1], first_frame.shape[0]))
+    out = cv2.VideoWriter(final_path, fourcc, fps, (w, h))
     try:
         out.write(first_frame)
         for frame in frames:
+            if frame.shape[:2] != (h, w):
+                frame = cv2.resize(frame, (w, h))
             out.write(frame)
     finally:
         out.release()

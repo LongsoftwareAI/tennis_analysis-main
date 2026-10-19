@@ -102,3 +102,12 @@ visualization:
   draw_stats: true            # Vẽ bảng thống kê tốc độ đánh và tốc độ chạy
   draw_referee_decision: true # Hiển thị thẻ phán quyết trọng tài Hawk-Eye ELC (check IN/OUT, khoảng cách vạch, tính điểm)
   draw_frame_number: true     # Vẽ số thứ tự frame ở góc trên bên trái
+
+# ------------------------------------------------------------------------------
+# 5. CẤU HÌNH XUẤT DỮ LIỆU PHÂN TÍCH HẬU TRẬN ĐẤU (POST-MATCH ANALYTICS & EXPORT)
+# ------------------------------------------------------------------------------
+analytics:
+  enabled: true                 # Tự động trích xuất và xuất dữ liệu phân tích sau trận
+  export_dir: "match_analytics" # Thư mục chứa dữ liệu JSON/CSV và ảnh biểu đồ phục vụ phase web sau này
+  generate_visuals: true        # Xuất trọn bộ ảnh 2D đồ họa cao cấp (Heatmap, Trajectory, Bounce dispersion)
+  dpi: 200                      # Độ phân giải ảnh xuất ra phục vụ hiển thị web

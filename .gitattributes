@@ -1,0 +1,12 @@
+# ==============================================================================
+# GitHub Linguist Language Detection Configuration
+# ==============================================================================
+# Treat Jupyter Notebooks as documentation so that Python is accurately recognized
+# as the primary programming language of the repository (100% Python).
+*.ipynb linguist-documentation=true
+*.ipynb linguist-detectable=false
+
+# Exclude markdown reports and documentation from language stats
+*.md linguist-documentation=true
+docs/* linguist-documentation=true
+reports/* linguist-documentation=true

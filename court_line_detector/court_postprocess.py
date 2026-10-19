@@ -82,8 +82,11 @@ def refine_keypoint(image, point, crop_size=40):
         return point
 
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    binary = cv2.threshold(gray, 155, 255, cv2.THRESH_BINARY)[1]
-    detected = cv2.HoughLinesP(binary, 1, np.pi / 180, 30, minLineLength=10, maxLineGap=30)
+    # Otsu adaptive thresholding for robust court-line segmentation across surfaces
+    otsu_val, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if otsu_val < 100 or otsu_val > 220:
+        binary = cv2.threshold(gray, 145, 255, cv2.THRESH_BINARY)[1]
+    detected = cv2.HoughLinesP(binary, 1, np.pi / 180, 25, minLineLength=8, maxLineGap=25)
     if detected is None or len(detected) < 2:
         return point
 
