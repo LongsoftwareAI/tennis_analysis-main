@@ -51,6 +51,241 @@ def video_output_path(cfg, video_stem):
     return output_path
 
 
+def aggregate_segment_analytics(export_base_dir, video_stem, segments, video_fps, total_frames):
+    """
+    Consolidate multi-segment match analytics into a unified full-timeline tracking dataset:
+    - Master player_tracking.csv covering all total_frames with correct frame offsets
+    - Master ball_tracking.csv covering all total_frames with correct frame offsets
+    - Master shots_detail.csv merging all shots across all rallies
+    - Master bounces.json merging all bounces across all rallies with absolute frame numbers
+    - Master summary_kpis.json containing overall totals AND individual rally decisions
+    """
+    import json
+    import glob
+    import shutil
+    import csv
+    from copy import deepcopy
+
+    match_dir = os.path.join(export_base_dir, video_stem)
+    if not os.path.exists(match_dir):
+        return
+
+    # Find segment subfolders like segment_0_381, segment_413_1081
+    seg_entries = []
+    for d in glob.glob(os.path.join(match_dir, "segment_*")):
+        if os.path.isdir(d):
+            base = os.path.basename(d)
+            parts = base.split("_")
+            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                start_f = int(parts[1])
+                end_f = int(parts[2])
+                seg_entries.append((start_f, end_f, d))
+
+    if not seg_entries:
+        return
+
+    seg_entries.sort(key=lambda x: x[0])
+    print(f"[MultiSegment] Consolidating {len(seg_entries)} segments across {total_frames} frames into '{match_dir}'...")
+
+    # 1. Collect all segment summaries & build rally decisions
+    seg_summaries = []
+    rallies = []
+    for idx, (start_f, end_f, d) in enumerate(seg_entries):
+        kpi_file = os.path.join(d, "summary_kpis.json")
+        if os.path.exists(kpi_file):
+            try:
+                with open(kpi_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    seg_summaries.append((start_f, end_f, d, data))
+
+                    rel_land = int(data.get("landing_frame", 0))
+                    abs_land = start_f + rel_land if rel_land > 0 else start_f
+
+                    rallies.append({
+                        "rally_index": idx + 1,
+                        "segment_frames": [start_f, end_f],
+                        "time_range": f"{start_f / max(1.0, video_fps):.2f}s - {end_f / max(1.0, video_fps):.2f}s",
+                        "decision": data.get("decision", "IN"),
+                        "point_winner": data.get("point_winner", "Player 1"),
+                        "margin_cm": round(float(data.get("margin_cm", 0.0)), 1),
+                        "nearest_line": data.get("nearest_line", ""),
+                        "landing_frame": abs_land,
+                        "landing_time_s": round(abs_land / max(1.0, video_fps), 2),
+                        "landing_pos_mini": data.get("landing_pos_mini"),
+                        "referee_reason": data.get("referee_reason", ""),
+                        "shots_count": data.get("rally_length_shots", 0)
+                    })
+            except Exception:
+                pass
+
+    if not seg_summaries:
+        return
+
+    # 2. Master summary_kpis.json
+    last_start, last_end, last_dir, last_kpi = seg_summaries[-1]
+    combined_kpi = deepcopy(last_kpi)
+
+    total_shots = sum(s[3].get("rally_length_shots", 0) for s in seg_summaries)
+    combined_kpi["match_name"] = video_stem
+    combined_kpi["total_frames"] = total_frames
+    combined_kpi["duration_seconds"] = round(total_frames / max(1.0, video_fps), 2)
+    combined_kpi["rally_length_shots"] = total_shots
+    combined_kpi["is_segmented_video"] = True
+    combined_kpi["segment_count"] = len(seg_summaries)
+    combined_kpi["rallies"] = rallies
+
+    for p in ("player_1", "player_2", "player_3", "player_4"):
+        if p in combined_kpi and isinstance(combined_kpi[p], dict):
+            tot_dist = sum(s[3].get(p, {}).get("total_distance_m", 0.0) for s in seg_summaries)
+            tot_hits = sum(s[3].get(p, {}).get("shots_hit", 0) for s in seg_summaries)
+            max_spd = max((s[3].get(p, {}).get("max_speed_kmh", 0.0) for s in seg_summaries), default=0.0)
+            combined_kpi[p]["total_distance_m"] = round(tot_dist, 2)
+            combined_kpi[p]["shots_hit"] = tot_hits
+            combined_kpi[p]["max_speed_kmh"] = max_spd
+
+    # Ensure top-level landing_frame reflects absolute video frame of the final rally
+    if rallies:
+        last_rally = rallies[-1]
+        combined_kpi["landing_frame"] = last_rally["landing_frame"]
+        combined_kpi["margin_cm"] = last_rally["margin_cm"]
+        combined_kpi["nearest_line"] = last_rally["nearest_line"]
+        combined_kpi["decision"] = last_rally["decision"]
+        combined_kpi["point_winner"] = last_rally["point_winner"]
+        combined_kpi["referee_reason"] = last_rally["referee_reason"]
+
+    top_kpi_path = os.path.join(match_dir, "summary_kpis.json")
+    with open(top_kpi_path, "w", encoding="utf-8") as f:
+        json.dump(combined_kpi, f, indent=2, ensure_ascii=False)
+
+    # 3. Build Full-Timeline Master player_tracking.csv (all 0..total_frames)
+    p_header = "frame,time_s,p1_x_m,p1_y_m,p1_speed_kmh,p1_zone,p2_x_m,p2_y_m,p2_speed_kmh,p2_zone\n"
+    master_p_rows = {}
+    for start_f, end_f, d, _ in seg_summaries:
+        p_file = os.path.join(d, "player_tracking.csv")
+        if os.path.exists(p_file):
+            with open(p_file, "r", encoding="utf-8") as pf:
+                rdr = csv.DictReader(pf)
+                for rel_idx, row in enumerate(rdr):
+                    abs_f = start_f + rel_idx
+                    if abs_f < total_frames:
+                        abs_t = round(abs_f / max(1.0, video_fps), 3)
+                        master_p_rows[abs_f] = (
+                            f"{abs_f},{abs_t},{row.get('p1_x_m','')},{row.get('p1_y_m','')},"
+                            f"{row.get('p1_speed_kmh','0.0')},{row.get('p1_zone','')},"
+                            f"{row.get('p2_x_m','')},{row.get('p2_y_m','')},"
+                            f"{row.get('p2_speed_kmh','0.0')},{row.get('p2_zone','')}\n"
+                        )
+
+    master_p_path = os.path.join(match_dir, "player_tracking.csv")
+    with open(master_p_path, "w", encoding="utf-8") as mpf:
+        mpf.write(p_header)
+        for f in range(total_frames):
+            if f in master_p_rows:
+                mpf.write(master_p_rows[f])
+            else:
+                t = round(f / max(1.0, video_fps), 3)
+                mpf.write(f"{f},{t},,,0.0,,,,0.0,\n")
+
+    # 4. Build Full-Timeline Master ball_tracking.csv (all 0..total_frames)
+    b_header = "frame,time_s,ball_cam_x,ball_cam_y,ball_x_m,ball_y_m\n"
+    master_b_rows = {}
+    for start_f, end_f, d, _ in seg_summaries:
+        b_file = os.path.join(d, "ball_tracking.csv")
+        if os.path.exists(b_file):
+            with open(b_file, "r", encoding="utf-8") as bf:
+                rdr = csv.DictReader(bf)
+                for rel_idx, row in enumerate(rdr):
+                    abs_f = start_f + rel_idx
+                    if abs_f < total_frames:
+                        abs_t = round(abs_f / max(1.0, video_fps), 3)
+                        master_b_rows[abs_f] = (
+                            f"{abs_f},{abs_t},{row.get('ball_cam_x','')},{row.get('ball_cam_y','')},"
+                            f"{row.get('ball_x_m','')},{row.get('ball_y_m','')}\n"
+                        )
+
+    master_b_path = os.path.join(match_dir, "ball_tracking.csv")
+    with open(master_b_path, "w", encoding="utf-8") as mbf:
+        mbf.write(b_header)
+        for f in range(total_frames):
+            if f in master_b_rows:
+                mbf.write(master_b_rows[f])
+            else:
+                t = round(f / max(1.0, video_fps), 3)
+                mbf.write(f"{f},{t},,,,\n")
+
+    # 5. Merge all bounces into master bounces.json with absolute frame numbers
+    master_bounces = []
+    b_idx = 1
+    for start_f, end_f, d, _ in seg_summaries:
+        bounces_file = os.path.join(d, "bounces.json")
+        if os.path.exists(bounces_file):
+            try:
+                with open(bounces_file, "r", encoding="utf-8") as bf:
+                    b_list = json.load(bf)
+                    for item in b_list:
+                        new_item = deepcopy(item)
+                        new_item["bounce_index"] = b_idx
+                        b_idx += 1
+                        rel_f = int(item.get("frame", 0))
+                        abs_f = start_f + rel_f
+                        new_item["frame"] = abs_f
+                        new_item["time_s"] = round(abs_f / max(1.0, video_fps), 2)
+                        master_bounces.append(new_item)
+            except Exception:
+                pass
+
+    master_bounces_path = os.path.join(match_dir, "bounces.json")
+    with open(master_bounces_path, "w", encoding="utf-8") as mbf:
+        json.dump(master_bounces, mbf, indent=2, ensure_ascii=False)
+
+    # 6. Merge all shots into master shots_detail.csv with absolute frame numbers
+    master_shots = []
+    shot_counter = 1
+    shot_fieldnames = None
+    for start_f, end_f, d, _ in seg_summaries:
+        shots_file = os.path.join(d, "shots_detail.csv")
+        if os.path.exists(shots_file):
+            with open(shots_file, "r", encoding="utf-8-sig") as sf:
+                rdr = csv.DictReader(sf)
+                if shot_fieldnames is None:
+                    shot_fieldnames = list(rdr.fieldnames) if rdr.fieldnames else []
+                for row in rdr:
+                    row["shot_index"] = str(shot_counter)
+                    shot_counter += 1
+                    for col in ("hit_frame", "start_frame"):
+                        if col in row and row[col]:
+                            try:
+                                row[col] = str(start_f + int(float(row[col])))
+                            except ValueError:
+                                pass
+                    if "end_frame" in row and row["end_frame"]:
+                        try:
+                            row["end_frame"] = str(start_f + int(float(row["end_frame"])))
+                        except ValueError:
+                            pass
+                    master_shots.append(row)
+
+    if master_shots and shot_fieldnames:
+        master_shots_path = os.path.join(match_dir, "shots_detail.csv")
+        with open(master_shots_path, "w", encoding="utf-8", newline="") as msf:
+            wtr = csv.DictWriter(msf, fieldnames=shot_fieldnames)
+            wtr.writeheader()
+            wtr.writerows(master_shots)
+
+    # 7. Copy visual charts from last segment if not at root
+    for fname in os.listdir(last_dir):
+        if fname.endswith(".png"):
+            src = os.path.join(last_dir, fname)
+            dst = os.path.join(match_dir, fname)
+            if not os.path.exists(dst):
+                try:
+                    shutil.copy2(src, dst)
+                except Exception:
+                    pass
+
+    print(f"[MultiSegment] Successfully built full-timeline master tracking ({total_frames} frames) at '{match_dir}'.")
+
+
 def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False):
     parser = argparse.ArgumentParser(description="Tennis Analysis Pipeline")
     parser.add_argument("--config", "-c", type=str, default="config.yaml",
@@ -59,8 +294,8 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
                         help="Override input video path specified in config.yaml")
     parser.add_argument("--output", "-o", type=str, default=None,
                         help="Override output video path or filename")
-    parser.add_argument("--ball_detector", "-b", type=str, default=None, choices=["tracknet", "yolo"],
-                        help="Ball detector engine: 'tracknet' (TrackNetV4 Keras) or 'yolo' (YOLO26 PyTorch)")
+    parser.add_argument("--ball_detector", "-b", type=str, default=None, choices=["tracknet", "yolo", "hybrid"],
+                        help="Ball detector engine: 'tracknet' (TrackNetV4 Keras), 'yolo' (YOLO26 PyTorch), or 'hybrid' (TrackNet + YOLO)")
     parser.add_argument("--court_mode", "-m", type=str, default="cpv",
                         help="Court tracking mode: 'cpv' (Pure CPV Optical Flow Tracking)")
     parser.add_argument("--device", "-d", type=str, default=None, choices=["auto", "cuda", "cpu"],
@@ -108,8 +343,19 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     if frame_range is None:
         print_config_summary(cfg, overrides=overrides if overrides else None)
 
+    # Auto-ensure all essential runtime directories exist (Cross-platform portability)
+    for req_dir in [
+        cfg["video"].get("output_dir", "output_videos"),
+        cfg["tracking"].get("stubs_dir", "tracker_stubs"),
+        ".app_tmp",
+        os.path.join(".app_tmp", "analytics"),
+        "history",
+        os.path.join("ui", "static", "outputs")
+    ]:
+        os.makedirs(req_dir, exist_ok=True)
+
     # 2. Read Video
-    input_video_path = cfg["video"].get("input_path", "input_videos/input_video.mp4")
+    input_video_path = os.path.normpath(cfg["video"].get("input_path", "input_videos/input_video.mp4"))
     if not os.path.exists(input_video_path):
         print(f"[ERROR] Input video not found at '{input_video_path}'")
         print(" [HINT] Check 'input_path' in config.yaml or provide a valid path via --input")
@@ -163,6 +409,15 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
         device_str = "cpu"
     else:  # "auto"
         device_str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Defensive runtime CUDA check: test tensor allocation to catch driver/OOM errors before model loading
+    if device_str == "cuda":
+        try:
+            test_t = torch.zeros(1, device="cuda")
+            del test_t
+        except Exception as e:
+            print(f"[Warning] CUDA initialization test failed ({e}). Falling back to CPU.")
+            device_str = "cpu"
 
     device = torch.device(device_str)
     models_cfg = cfg.get("models", {})
@@ -225,6 +480,8 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
                 merge_court_frames(iter_video_frames(input_video_path), segments, analyze_segment),
                 output_path, fps=video_fps,
             )
+            export_dir = cfg.get("analytics", {}).get("export_dir", "match_analytics")
+            aggregate_segment_analytics(export_dir, video_stem, segments, video_fps, total_frames)
             print(f"\n=== Successfully generated tennis analysis video at {saved_path} ===")
             return
 
@@ -391,13 +648,22 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     player_stats_data_df = pd.merge(frames_df, player_stats_data_df, on='frame_num', how='left')
     player_stats_data_df = player_stats_data_df.ffill()
 
+    team1_shots = (
+        player_stats_data_df['player_1_number_of_shots'] +
+        player_stats_data_df['player_3_number_of_shots']
+    )
+    team2_shots = (
+        player_stats_data_df['player_2_number_of_shots'] +
+        player_stats_data_df['player_4_number_of_shots']
+    )
+
     for p in (1, 2, 3, 4):
-        opp = 2 if p in (1, 3) else 1
+        opp_team_shots = team2_shots if p in (1, 3) else team1_shots
         player_stats_data_df[f'player_{p}_average_shot_speed'] = (
             player_stats_data_df[f'player_{p}_total_shot_speed'] / player_stats_data_df[f'player_{p}_number_of_shots'].replace(0, np.nan)
         ).fillna(0)
         player_stats_data_df[f'player_{p}_average_player_speed'] = (
-            player_stats_data_df[f'player_{p}_total_player_speed'] / player_stats_data_df[f'player_{opp}_number_of_shots'].replace(0, np.nan)
+            player_stats_data_df[f'player_{p}_total_player_speed'] / opp_team_shots.replace(0, np.nan)
         ).fillna(0)
 
     # 9.5 Referee Hawk-Eye ELC Decision Analysis (CatBoost Bounce Detection)
@@ -426,11 +692,13 @@ def main(run_args=None, auto_segment=True, frame_range=None, return_frames=False
     analytics_cfg = cfg.get("analytics", {})
     if analytics_cfg.get("enabled", True):
         from analysis.match_analyzer import MatchAnalyzer
+        export_dir = analytics_cfg.get("export_dir", "match_analytics")
+        analytics_stem = video_stem if frame_range is None else os.path.join(video_stem, f"segment_{range_start}_{range_end}")
         analyzer = MatchAnalyzer(
             mini_court=mini_court,
             video_fps=video_fps,
-            video_stem=video_stem,
-            export_dir=analytics_cfg.get("export_dir", "match_analytics"),
+            video_stem=analytics_stem,
+            export_dir=export_dir,
             generate_visuals=analytics_cfg.get("generate_visuals", True),
             dpi=analytics_cfg.get("dpi", 200)
         )

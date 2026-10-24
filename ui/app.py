@@ -28,12 +28,14 @@ st.markdown(
 <style>
 :root{--acc:#3b5bdb;--acc-2:#5c7cfa;--acc-soft:rgba(92,124,250,.16);--line:rgba(128,128,128,.26);
 --surf:rgba(128,128,128,.07);--ok:#2fb344;--t:.18s ease}
-.block-container{padding-top:2rem;padding-bottom:4rem}
+header[data-testid="stHeader"]{background:transparent!important;pointer-events:none}
+header[data-testid="stHeader"] *{pointer-events:auto}
+.block-container{padding-top:4.2rem!important;padding-bottom:4rem}
 /* ---------- Brand bar ---------- */
-.brand{display:flex;align-items:center;gap:12px;margin-bottom:34px}
-.brand .lg{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;color:#fff;
+.brand{display:flex;align-items:center;gap:12px;margin-top:6px;margin-bottom:32px}
+.brand .lg{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;color:#fff;
 background:linear-gradient(135deg,#182254,#3b5bdb);box-shadow:0 8px 20px rgba(59,91,219,.32)}
-.brand b{font-size:16px;letter-spacing:-.01em}
+.brand b{font-size:17px;font-weight:750;letter-spacing:-.01em;color:var(--text-color)}
 /* ---------- Hero ---------- */
 .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 13px;border-radius:999px;font-size:12.5px;font-weight:600;
 border:1px solid rgba(92,124,250,.45);background:var(--acc-soft)}

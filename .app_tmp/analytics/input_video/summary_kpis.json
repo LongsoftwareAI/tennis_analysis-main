@@ -6,8 +6,19 @@
   "rally_length_shots": 5,
   "point_winner": "Player 1",
   "decision": "IN",
-  "margin_cm": 58.425443522136206,
-  "referee_reason": "",
+  "margin_cm": 68.10721842447995,
+  "nearest_line": "Left Sideline (Bien trai)",
+  "landing_frame": 204,
+  "hitter_id": 1,
+  "landing_pos_mini": [
+    1810.736083984375,
+    151.13609313964844
+  ],
+  "first_bounce_pos": [
+    1810.736083984375,
+    151.13609313964844
+  ],
+  "referee_reason": "Player 1 an diem Winner (Passing shot trong san +68.1 cm)",
   "ball_speed_kpis": {
     "avg_speed_kmh": 81.4,
     "max_speed_kmh": 86.1,
@@ -20,7 +31,7 @@
     "avg_speed_kmh": 6.7,
     "max_speed_kmh": 19.7,
     "shots_hit": 3,
-    "deep_ball_ratio_pct": 33.3,
+    "deep_ball_ratio_pct": 0.0,
     "zone_distribution_pct": {
       "baseline": 97.2,
       "nomans_land": 2.8,

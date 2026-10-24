@@ -1,72 +1,302 @@
 [
   {
     "bounce_index": 1,
-    "frame": 118,
-    "time_s": 2.36,
-    "shot_index": 3,
-    "court_side": "Far Court (Player 2)",
-    "x_m": 1.64,
-    "y_m": -6.65,
+    "frame": 55,
+    "time_s": 1.1,
+    "shot_index": 1,
+    "court_side": "Near Court (Player 1)",
+    "x_m": 1.21,
+    "y_m": 5.39,
+    "camera_pos": [
+      1049.3,
+      603.5
+    ],
     "is_in": true,
     "status": "IN",
-    "depth_category": "Medium (Giua san)",
-    "margin_cm": 247.2,
-    "is_final": false
+    "nearest_line": "Baseline",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 290.6,
+    "is_final": false,
+    "confidence_score": 0.727
   },
   {
     "bounce_index": 2,
-    "frame": 198,
-    "time_s": 3.96,
-    "shot_index": 4,
-    "court_side": "Near Court (Player 1)",
-    "x_m": -3.39,
-    "y_m": 9.15,
+    "frame": 147,
+    "time_s": 2.94,
+    "shot_index": 2,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 3.05,
+    "y_m": -3.94,
+    "camera_pos": [
+      1133.0,
+      401.0
+    ],
     "is_in": true,
     "status": "IN",
-    "depth_category": "Medium (Giua san)",
-    "margin_cm": 72.7,
-    "is_final": false
+    "nearest_line": "Sideline",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 106.3,
+    "is_final": false,
+    "confidence_score": 0.691
   },
   {
     "bounce_index": 3,
-    "frame": 256,
-    "time_s": 5.12,
-    "shot_index": 5,
-    "court_side": "Far Court (Player 2)",
-    "x_m": 2.56,
-    "y_m": -6.85,
+    "frame": 206,
+    "time_s": 4.12,
+    "shot_index": 3,
+    "court_side": "Near Court (Player 1)",
+    "x_m": -2.2,
+    "y_m": 9.58,
+    "camera_pos": [
+      757.8,
+      742.7
+    ],
     "is_in": true,
     "status": "IN",
+    "nearest_line": "Baseline",
     "depth_category": "Medium (Giua san)",
-    "margin_cm": 155.7,
-    "is_final": false
+    "margin_cm": 191.8,
+    "is_final": false,
+    "confidence_score": 0.592
   },
   {
     "bounce_index": 4,
-    "frame": 383,
-    "time_s": 7.66,
-    "shot_index": 7,
+    "frame": 262,
+    "time_s": 5.24,
+    "shot_index": 4,
     "court_side": "Far Court (Player 2)",
-    "x_m": 1.57,
-    "y_m": -7.46,
+    "x_m": -2.45,
+    "y_m": -5.69,
+    "camera_pos": [
+      813.6,
+      374.4
+    ],
     "is_in": true,
     "status": "IN",
-    "depth_category": "Medium (Giua san)",
-    "margin_cm": 254.3,
-    "is_final": false
+    "nearest_line": "Left Sideline (Bien trai)",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 166.8,
+    "is_final": true,
+    "confidence_score": 0.556
   },
   {
     "bounce_index": 5,
-    "frame": 553,
-    "time_s": 11.06,
+    "frame": 297,
+    "time_s": 5.94,
+    "shot_index": 4,
+    "court_side": "Far Court (Player 2)",
+    "x_m": -2.3,
+    "y_m": -14.29,
+    "camera_pos": [
+      843.4,
+      267.6
+    ],
+    "is_in": false,
+    "status": "OUT",
+    "nearest_line": "Baseline",
+    "depth_category": "Deep (Bong sau)",
+    "margin_cm": -240.7,
+    "is_final": false,
+    "confidence_score": 0.664
+  },
+  {
+    "bounce_index": 6,
+    "frame": 339,
+    "time_s": 6.78,
+    "shot_index": 4,
+    "court_side": "Far Court (Player 2)",
+    "x_m": -1.65,
+    "y_m": -14.81,
+    "camera_pos": [
+      869.0,
+      270.2
+    ],
+    "is_in": false,
+    "status": "OUT",
+    "nearest_line": "Baseline",
+    "depth_category": "Deep (Bong sau)",
+    "margin_cm": -292.1,
+    "is_final": false,
+    "confidence_score": 0.484
+  },
+  {
+    "bounce_index": 7,
+    "frame": 474,
+    "time_s": 9.48,
+    "shot_index": 2,
+    "court_side": "Near Court (Player 1)",
+    "x_m": -2.5,
+    "y_m": 5.09,
+    "camera_pos": [
+      763.2,
+      596.1
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Baseline",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 161.7,
+    "is_final": false,
+    "confidence_score": 0.777
+  },
+  {
+    "bounce_index": 8,
+    "frame": 542,
+    "time_s": 10.84,
+    "shot_index": 3,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 2.47,
+    "y_m": -5.78,
+    "camera_pos": [
+      1097.1,
+      370.5
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Baseline",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 164.9,
+    "is_final": false,
+    "confidence_score": 0.641
+  },
+  {
+    "bounce_index": 9,
+    "frame": 625,
+    "time_s": 12.5,
+    "shot_index": 4,
+    "court_side": "Near Court (Player 1)",
+    "x_m": -5.35,
+    "y_m": 10.59,
+    "camera_pos": [
+      453.2,
+      783.4
+    ],
+    "is_in": false,
+    "status": "OUT",
+    "nearest_line": "Sideline",
+    "depth_category": "Deep (Bong sau)",
+    "margin_cm": -123.6,
+    "is_final": false,
+    "confidence_score": 0.704
+  },
+  {
+    "bounce_index": 10,
+    "frame": 676,
+    "time_s": 13.52,
+    "shot_index": 5,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 3.23,
+    "y_m": -6.53,
+    "camera_pos": [
+      1137.8,
+      359.2
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Sideline",
+    "depth_category": "Medium (Giua san)",
+    "margin_cm": 88.5,
+    "is_final": false,
+    "confidence_score": 0.562
+  },
+  {
+    "bounce_index": 11,
+    "frame": 740,
+    "time_s": 14.8,
+    "shot_index": 6,
+    "court_side": "Near Court (Player 1)",
+    "x_m": -1.99,
+    "y_m": 9.12,
+    "camera_pos": [
+      780.6,
+      726.4
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Baseline",
+    "depth_category": "Medium (Giua san)",
+    "margin_cm": 212.3,
+    "is_final": false,
+    "confidence_score": 0.516
+  },
+  {
+    "bounce_index": 12,
+    "frame": 801,
+    "time_s": 16.02,
+    "shot_index": 7,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 1.85,
+    "y_m": -7.38,
+    "camera_pos": [
+      1057.3,
+      347.0
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Baseline",
+    "depth_category": "Medium (Giua san)",
+    "margin_cm": 226.6,
+    "is_final": false,
+    "confidence_score": 0.595
+  },
+  {
+    "bounce_index": 13,
+    "frame": 864,
+    "time_s": 17.28,
+    "shot_index": 8,
+    "court_side": "Near Court (Player 1)",
+    "x_m": -2.64,
+    "y_m": 9.23,
+    "camera_pos": [
+      721.2,
+      730.6
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Baseline",
+    "depth_category": "Medium (Giua san)",
+    "margin_cm": 147.1,
+    "is_final": false,
+    "confidence_score": 0.662
+  },
+  {
+    "bounce_index": 14,
+    "frame": 918,
+    "time_s": 18.36,
+    "shot_index": 9,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 2.41,
+    "y_m": -5.64,
+    "camera_pos": [
+      1094.4,
+      372.6
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Left Sideline (Bien trai)",
+    "depth_category": "Short (Bong ngan)",
+    "margin_cm": 170.5,
+    "is_final": true,
+    "confidence_score": 0.76
+  },
+  {
+    "bounce_index": 15,
+    "frame": 966,
+    "time_s": 19.32,
     "shot_index": 10,
     "court_side": "Far Court (Player 2)",
     "x_m": 0.93,
     "y_m": -0.97,
-    "is_in": false,
-    "status": "OUT",
+    "camera_pos": [
+      1016.7,
+      454.0
+    ],
+    "is_in": true,
+    "status": "IN",
+    "nearest_line": "Baseline",
     "depth_category": "Short (Bong ngan)",
-    "margin_cm": 0.0,
-    "is_final": true
+    "margin_cm": 318.5,
+    "is_final": false,
+    "confidence_score": 0.469
   }
 ]

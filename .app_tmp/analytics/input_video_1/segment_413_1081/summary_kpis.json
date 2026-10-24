@@ -1,0 +1,65 @@
+{
+  "match_name": "input_video_1\\segment_413_1081",
+  "total_frames": 668,
+  "fps": 50.0,
+  "duration_seconds": 13.36,
+  "rally_length_shots": 10,
+  "point_winner": "Player 1",
+  "decision": "IN",
+  "margin_cm": 170.45677257719572,
+  "nearest_line": "Left Sideline (Bien trai)",
+  "landing_frame": 505,
+  "hitter_id": 1,
+  "landing_pos_mini": [
+    1791.1431884765625,
+    189.42117309570312
+  ],
+  "first_bounce_pos": [
+    1791.1431884765625,
+    189.42117309570312
+  ],
+  "referee_reason": "Player 1 an diem Winner (Passing shot trong san +170.5 cm)",
+  "ball_speed_kpis": {
+    "avg_speed_kmh": 82.4,
+    "max_speed_kmh": 86.3,
+    "fastest_hitter": "Player 1"
+  },
+  "player_1": {
+    "name": "Player 1",
+    "court_side": "Near Court (San gan)",
+    "total_distance_m": 14.22,
+    "avg_speed_kmh": 3.8,
+    "max_speed_kmh": 18.6,
+    "shots_hit": 4,
+    "deep_ball_ratio_pct": 0.0,
+    "zone_distribution_pct": {
+      "baseline": 100.0,
+      "nomans_land": 0.0,
+      "attack_zone": 0.0
+    },
+    "lateral_distribution_pct": {
+      "ad_court": 100.0,
+      "center": 0.0,
+      "deuce_court": 0.0
+    }
+  },
+  "player_2": {
+    "name": "Player 2",
+    "court_side": "Far Court (San xa)",
+    "total_distance_m": 21.55,
+    "avg_speed_kmh": 5.8,
+    "max_speed_kmh": 36.0,
+    "shots_hit": 6,
+    "deep_ball_ratio_pct": 16.7,
+    "zone_distribution_pct": {
+      "baseline": 84.4,
+      "nomans_land": 15.6,
+      "attack_zone": 0.0
+    },
+    "lateral_distribution_pct": {
+      "ad_court": 0.0,
+      "center": 0.0,
+      "deuce_court": 100.0
+    }
+  }
+}

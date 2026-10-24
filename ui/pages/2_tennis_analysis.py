@@ -55,13 +55,15 @@ st.markdown("""
 :root{--acc:#3b5bdb;--acc-2:#5c7cfa;--acc-soft:rgba(92,124,250,.16);--line:rgba(128,128,128,.26);
 --surf:rgba(128,128,128,.07);--ok:#2fb344;--ok-soft:rgba(47,179,68,.15);--bad:#e5484d;--bad-soft:rgba(229,72,77,.15);
 --warn:#f59f00;--warn-soft:rgba(245,159,0,.16);--t:.16s ease}
-.block-container{padding-top:2.4rem;padding-bottom:4rem}
+header[data-testid="stHeader"]{background:transparent!important;pointer-events:none}
+header[data-testid="stHeader"] *{pointer-events:auto}
+.block-container{padding-top:4.2rem!important;padding-bottom:4rem}
 /* Header */
-.pg-hd{display:flex;gap:16px;align-items:center}
+.pg-hd{display:flex;gap:16px;align-items:center;margin-top:6px}
 .pg-ic{flex:none;width:52px;height:52px;border-radius:15px;display:grid;place-items:center;color:#fff;
 background:linear-gradient(135deg,#182254 0%,#3b5bdb 100%);box-shadow:0 10px 24px rgba(59,91,219,.32)}
-.pg-t{margin:0!important;padding:0!important;font-size:28px!important;font-weight:750!important;line-height:1.2!important;letter-spacing:-.01em}
-.pg-s{margin:4px 0 0;opacity:.72;font-size:14px;line-height:1.55}
+.pg-t{margin:0!important;padding:0!important;font-size:28px!important;font-weight:750!important;line-height:1.2!important;letter-spacing:-.01em;color:var(--text-color)}
+.pg-s{margin:4px 0 0;opacity:.72;font-size:14px;line-height:1.55;color:var(--text-color)}
 .meta{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 18px}
 .nav-r{display:flex;justify-content:flex-end;align-items:center;height:52px}
 /* Chips */
@@ -217,13 +219,50 @@ def stepper_html(step):
 
 
 def team_name(names, team, doubles):
-    ids = (1, 3) if int(team) == 1 else (2, 4)
+    m = re.search(r"\d+", str(team))
+    t = int(m.group(0)) if m else 1
+    ids = (1, 3) if t == 1 else (2, 4)
     if not doubles:
         ids = ids[:1]
     return " / ".join(names.get(str(i), f"Player {i}") for i in ids)
 
 
-def decision_html(d, names, doubles=False):
+def decision_html(d, names, doubles=False, rallies=None):
+    if rallies and len(rallies) > 1:
+        cards = []
+        for r in rallies:
+            out = r.get("decision") == "OUT"
+            winner = _html.escape(team_name(names, r.get("point_winner") or 1, doubles))
+            rid = r.get("rally_index", 1)
+            trange = r.get("time_range", "")
+            sf = r.get("segment_frames", [])
+            f_label = f"Frame {sf[0]}–{sf[1]}" if len(sf) == 2 else ""
+            title_parts = [f"Pha bóng #{rid}"]
+            if trange:
+                title_parts.append(f"({trange})")
+            if f_label:
+                title_parts.append(f"· {f_label}")
+            title_str = " ".join(title_parts)
+
+            reason = r.get("referee_reason", "")
+            reason_html = f'<dt>Chi tiết</dt><dd>{_html.escape(reason)}</dd>' if reason else ""
+
+            cards.append(
+                f'<div class="dec {"out" if out else ""}" style="margin-top:10px">'
+                f'<div style="flex-basis:100%;font-weight:700;font-size:14px;color:var(--txt);margin-bottom:-6px">🎾 {title_str}</div>'
+                f'<div class="badge">{r.get("decision", "-")}</div>'
+                f'<dl><dt>Điểm cho</dt><dd>{winner}</dd>'
+                f'<dt>Vạch gần nhất</dt><dd>{_html.escape(str(r.get("nearest_line", "-")))}</dd>'
+                f'<dt>Margin</dt><dd>{r.get("margin_cm", 0):+.1f} cm</dd>'
+                f'<dt>Bóng chạm đất</dt><dd>Frame {r.get("landing_frame", "-")} ({r.get("landing_time_s", 0):.2f}s)</dd>'
+                f'{reason_html}</dl></div>'
+            )
+        return (
+            '<div style="margin-top:14px">'
+            '<div style="font-weight:700;font-size:15px;margin-bottom:6px">⚖️ Quyết định trọng tài Hawk-Eye theo từng pha bóng:</div>'
+            + "".join(cards) +
+            '</div>'
+        )
     if not d:
         return ""
     out = d.get("decision") == "OUT"
@@ -587,8 +626,11 @@ def _pick(d, *keys, default=None):
     return default
 
 
-def _find_file(paths, need, any_of=()):
-    for p in sorted(paths):
+def _find_file(paths, need, any_of=(), root_dir=None):
+    def sort_key(p):
+        is_root = 0 if root_dir and os.path.dirname(os.path.abspath(p)) == os.path.abspath(root_dir) else 1
+        return (is_root, len(p), p)
+    for p in sorted(paths, key=sort_key):
         b = _n(os.path.basename(p))
         if all(k in b for k in need) and (not any_of or any(k in b for k in any_of)):
             return p
@@ -624,11 +666,11 @@ def load_analytics_payload(input_video, out_video_for_fps, adir, names):
     csvs = glob.glob(os.path.join(adir, "**", "*.csv"), recursive=True)
     jsons = glob.glob(os.path.join(adir, "**", "*.json"), recursive=True)
     found = {
-        "player": _find_file(csvs, ("player",), ("track", "pos", "traj")),
-        "ball": _find_file(csvs, ("ball",), ("track", "pos", "traj")),
-        "shots": _find_file(csvs, ("shot",)),
-        "summary": (_find_file(jsons, ("summary",)) or _find_file(jsons, ("kpi",))
-                    or (sorted(jsons)[0] if jsons else None)),
+        "player": _find_file(csvs, ("player",), ("track", "pos", "traj"), root_dir=adir),
+        "ball": _find_file(csvs, ("ball",), ("track", "pos", "traj"), root_dir=adir),
+        "shots": _find_file(csvs, ("shot",), root_dir=adir),
+        "summary": (_find_file(jsons, ("summary",), root_dir=adir) or _find_file(jsons, ("kpi",), root_dir=adir)
+                    or (sorted(jsons, key=lambda p: (0 if os.path.dirname(os.path.abspath(p)) == os.path.abspath(adir) else 1, p))[0] if jsons else None)),
     }
     dbg["files"] = {k: (os.path.relpath(v, adir) if v else None) for k, v in found.items()}
     missing = [k for k in ("player", "ball") if not found[k]]
@@ -664,10 +706,31 @@ def load_analytics_payload(input_video, out_video_for_fps, adir, names):
     stats, dist_m = compute_stats(n, fps, events, tracks, ch / cw)
 
     decision = None
+    rallies = []
+    segment_count = 1
     if found["summary"]:
         try:
             with open(found["summary"], "r", encoding="utf-8") as f:
-                rd = _find_decision(json.load(f))
+                s_data = json.load(f)
+                rd = _find_decision(s_data)
+                segment_count = s_data.get("segment_count", 1)
+                if "rallies" in s_data and isinstance(s_data["rallies"], list):
+                    for r in s_data["rallies"]:
+                        lp = _pick(r, "landing_pos_mini", "first_bounce_pos", "landing_pos")
+                        rallies.append({
+                            "rally_index": r.get("rally_index", 1),
+                            "segment_frames": r.get("segment_frames", []),
+                            "time_range": r.get("time_range", ""),
+                            "decision": str(r.get("decision", "IN")).strip().upper(),
+                            "point_winner": _int(_pick(r, "point_winner", "winner", default=1)),
+                            "margin_cm": _num(_pick(r, "margin_cm", "margin", default=0)),
+                            "nearest_line": str(_pick(r, "nearest_line", "line", default="")),
+                            "landing_frame": _int(_pick(r, "landing_frame", "bounce_frame", "frame", default=0)),
+                            "landing_time_s": _num(r.get("landing_time_s", 0.0)),
+                            "landing_pos": (conv(lp[0], lp[1], "px") if isinstance(lp, (list, tuple)) and len(lp) >= 2 else None),
+                            "referee_reason": str(r.get("referee_reason", "")),
+                            "shots_count": int(r.get("shots_count", 0)),
+                        })
         except Exception as e:  # noqa: BLE001
             rd = None
             warns.append(f"Không đọc được summary JSON: {e}")
@@ -687,6 +750,7 @@ def load_analytics_payload(input_video, out_video_for_fps, adir, names):
     else:
         warns.append("Không thấy summary JSON -> bỏ qua thẻ IN/OUT của trọng tài.")
     dbg["decision_found"] = decision is not None
+    dbg["rallies_count"] = len(rallies)
 
     kc = mc.drawing_key_points
     court = [[nx(kc[2 * i]), ny(kc[2 * i + 1])] for i in range(14)]
@@ -697,6 +761,7 @@ def load_analytics_payload(input_video, out_video_for_fps, adir, names):
                "ball_detect_rate": sum(b is not None for b in ball) / max(1, n)}
     payload = {"fps": float(fps), "n": n, "w": w, "h": h, "court": court, "ball": ball,
                "players": tracks, "stats": stats, "shots": shots, "decision": decision,
+               "rallies": rallies, "segment_count": segment_count,
                "names": names, "metrics": metrics}
     return payload, warns, found, dbg
 
@@ -772,11 +837,17 @@ const ny=(c[8][1]+c[10][1])/2;rx.strokeStyle='#ffb020';rx.lineWidth=3;rx.beginPa
 rx.fillStyle='#fff';rx.font='10px sans-serif';rx.fillText('NET',W/2-9,Y(ny)-6);
 rx.strokeStyle='rgba(214,255,58,.6)';rx.lineWidth=2;rx.beginPath();let on=false;
 for(let k=10;k>=0;k--){const b=P.ball[Math.max(0,f-k)];if(!b)continue;on?rx.lineTo(X(b[0]),Y(b[1])):rx.moveTo(X(b[0]),Y(b[1]));on=true;}rx.stroke();
-const d=P.decision;
-if(d&&d.landing_pos&&f>=d.landing_frame){const p=d.landing_pos,ok=d.decision!=='OUT';
+const rlist=(P.rallies&&P.rallies.length>0)?P.rallies:(P.decision?[P.decision]:[]);
+rlist.forEach(r=>{
+if(r&&r.landing_pos&&f>=r.landing_frame){
+const isActive=!r.segment_frames||(f>=r.segment_frames[0]&&f<=r.segment_frames[1]+50);
+rx.save();if(!isActive&&rlist.length>1)rx.globalAlpha=0.5;
+const p=r.landing_pos,ok=r.decision!=='OUT';
 rx.fillStyle=ok?'#22b45a':'#e5484d';rx.beginPath();rx.ellipse(X(p[0]),Y(p[1]),8,5,0,0,7);rx.fill();
 rx.strokeStyle='#fff';rx.lineWidth=1.5;rx.stroke();rx.fillStyle='#fff';
-rx.fillText((ok?'IN ':'OUT ')+Math.abs(d.margin_cm).toFixed(0)+'cm',Math.min(X(p[0])+12,W-70),Y(p[1])-6);}
+const tag=(rlist.length>1?'R'+(r.rally_index||'')+' ':'')+(ok?'IN ':'OUT ')+Math.abs(r.margin_cm||0).toFixed(0)+'cm';
+rx.fillText(tag,Math.min(X(p[0])+12,W-75),Y(p[1])-6);rx.restore();}
+});
 [['1','#4aa8ff'],['3','#8fd0ff'],['2','#ff6b4a'],['4','#ffa58a']].forEach(([id,col])=>{
 const a=P.players[id],p=a&&a[f];if(!p)return;rx.fillStyle=col;rx.beginPath();rx.arc(X(p[0]),Y(p[1]),8,0,7);rx.fill();
 rx.strokeStyle='#fff';rx.lineWidth=1;rx.stroke();rx.fillStyle='#fff';rx.font='bold 9px sans-serif';rx.fillText('P'+id,X(p[0])-6,Y(p[1])+3);});
@@ -1058,15 +1129,16 @@ if res:
     ]), unsafe_allow_html=True)
 
     if res.get("segmented"):
-        st.warning("Video có nhiều đoạn không phải toàn cảnh sân: số liệu analytics chỉ ứng với đoạn phân tích "
-                   "cuối, nên radar/bảng thống kê có thể lệch so với video. Nên dùng clip toàn cảnh sân.")
+        r_cnt = len(p.get("rallies") or [])
+        st.info(f"🎬 Video gồm {p.get('segment_count', r_cnt)} góc quay / pha bóng: "
+                f"Hệ thống đã hợp nhất thành công {r_cnt} phán quyết và đồng bộ toàn bộ dòng thời gian vào Radar Hawk-Eye.")
     if res.get("warns"):
         st.markdown('<div class="meta" style="margin:0 0 14px">' +
                     "".join(chip(w, "warn", "alert") for w in res["warns"]) + '</div>', unsafe_allow_html=True)
 
     render_player(p, "/app/static/outputs/" + os.path.basename(res["mp4"]))
     if p.get("show", {}).get("referee", True):
-        st.markdown(decision_html(p["decision"], p["names"], detected_doubles), unsafe_allow_html=True)
+        st.markdown(decision_html(p.get("decision"), p["names"], detected_doubles, rallies=p.get("rallies")), unsafe_allow_html=True)
 
     pngs = sorted(glob.glob(os.path.join(res["adir"], "*.png")))
     if pngs:
