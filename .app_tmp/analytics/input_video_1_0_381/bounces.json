@@ -1,0 +1,30 @@
+[
+  {
+    "bounce_index": 1,
+    "frame": 115,
+    "time_s": 2.3,
+    "shot_index": 2,
+    "court_side": "Far Court (Player 2)",
+    "x_m": 4.51,
+    "y_m": -10.91,
+    "is_in": false,
+    "status": "OUT",
+    "depth_category": "Deep (Bong sau)",
+    "margin_cm": 39.6,
+    "is_final": false
+  },
+  {
+    "bounce_index": 2,
+    "frame": 289,
+    "time_s": 5.78,
+    "shot_index": 4,
+    "court_side": "Far Court (Player 2)",
+    "x_m": -2.42,
+    "y_m": -14.0,
+    "is_in": false,
+    "status": "OUT",
+    "depth_category": "Deep (Bong sau)",
+    "margin_cm": 169.4,
+    "is_final": false
+  }
+]

@@ -64,12 +64,25 @@ class BallShotMetricsAnalyzer:
             dist_to_sideline = abs(abs(x_m) - (self.geom.court_width_singles / 2.0))
             depth_cat = self.geom.classify_depth(y_m)
 
-            margin_cm = float(b.get("margin_side", dist_to_sideline * 100.0))
+            margin_cm = float(b.get("margin_cm", b.get("margin_side", dist_to_sideline * 100.0)))
+            nearest_line = b.get("nearest_line", "")
             if is_final and decision_info is not None:
                 margin_cm = float(decision_info.get("margin_cm", margin_cm))
                 is_in = decision_info.get("decision") in ("IN", "WINNER")
+                if decision_info.get("nearest_line"):
+                    nearest_line = decision_info.get("nearest_line")
 
-            bounces_list.append({
+            # Camera pixel position
+            cam_pos = b.get("camera_pos")
+            camera_pos = None
+            if cam_pos is not None and hasattr(cam_pos, '__len__') and len(cam_pos) >= 2:
+                if np.isfinite(cam_pos[0]) and np.isfinite(cam_pos[1]):
+                    camera_pos = [round(float(cam_pos[0]), 1), round(float(cam_pos[1]), 1)]
+
+            score = b.get("score")
+            conf_score = round(float(score), 3) if score is not None and np.isfinite(score) else None
+
+            bounce_item = {
                 "bounce_index": idx + 1,
                 "frame": f,
                 "time_s": round(f / video_fps, 2),
@@ -77,12 +90,18 @@ class BallShotMetricsAnalyzer:
                 "court_side": court_side,
                 "x_m": round(x_m, 2),
                 "y_m": round(y_m, 2),
+                "camera_pos": camera_pos,
                 "is_in": is_in,
                 "status": "IN" if is_in else "OUT",
+                "nearest_line": nearest_line if nearest_line else ("Sideline" if abs(x_m) > 3.0 else "Baseline"),
                 "depth_category": depth_cat,
                 "margin_cm": round(margin_cm, 1),
                 "is_final": is_final
-            })
+            }
+            if conf_score is not None:
+                bounce_item["confidence_score"] = conf_score
+
+            bounces_list.append(bounce_item)
 
         return df_ball_tracking, bounces_list
 
@@ -214,11 +233,18 @@ class BallShotMetricsAnalyzer:
         total_shots = len(shots_df)
         duration_s = round(num_frames / video_fps, 2)
 
-        if not shots_df.empty:
-            avg_shot_speed = round(float(shots_df["speed_kmh"].mean()), 1)
-            max_shot_speed = round(float(shots_df["speed_kmh"].max()), 1)
-            fastest_shot_row = shots_df.loc[shots_df["speed_kmh"].idxmax()]
-            fastest_hitter = fastest_shot_row["hitter"]
+        if not shots_df.empty and "speed_kmh" in shots_df.columns and shots_df["speed_kmh"].notna().any():
+            valid_speeds = pd.to_numeric(shots_df["speed_kmh"], errors="coerce").dropna()
+            if not valid_speeds.empty:
+                avg_shot_speed = round(float(valid_speeds.mean()), 1)
+                max_shot_speed = round(float(valid_speeds.max()), 1)
+                fastest_idx = valid_speeds.idxmax()
+                fastest_shot_row = shots_df.loc[fastest_idx]
+                fastest_hitter = str(fastest_shot_row.get("hitter", "Player 1"))
+            else:
+                avg_shot_speed = 0.0
+                max_shot_speed = 0.0
+                fastest_hitter = "N/A"
         else:
             avg_shot_speed = 0.0
             max_shot_speed = 0.0
@@ -229,15 +255,29 @@ class BallShotMetricsAnalyzer:
             winner_name = f"Player {winner_id}"
             decision_type = decision_info.get("decision", "IN")
             margin_cm = decision_info.get("margin_cm", 0.0)
-            reason = decision_info.get("reason", "")
+            reason = decision_info.get("reason_text", decision_info.get("reason", ""))
+            nearest_line = decision_info.get("nearest_line", "")
+            landing_frame = int(decision_info.get("landing_frame", decision_info.get("bounce_frame", 0)))
+            hitter_id = int(decision_info.get("hitter_id", 1))
+            landing_pos_mini = decision_info.get("landing_pos_mini", decision_info.get("first_bounce_pos"))
+            first_bounce_pos = decision_info.get("first_bounce_pos", decision_info.get("landing_pos_mini"))
         else:
             winner_name = "Player 1"
             decision_type = "IN"
             margin_cm = 0.0
             reason = "Pha bóng hoàn thành"
+            nearest_line = ""
+            landing_frame = 0
+            hitter_id = 1
+            landing_pos_mini = None
+            first_bounce_pos = None
 
-        p1_shots = shots_df[shots_df["hitter_id"] == 1] if not shots_df.empty else pd.DataFrame()
-        p2_shots = shots_df[shots_df["hitter_id"] == 2] if not shots_df.empty else pd.DataFrame()
+        if not shots_df.empty and "hitter_id" in shots_df.columns:
+            p1_shots = shots_df[shots_df["hitter_id"].astype(str) == "1"]
+            p2_shots = shots_df[shots_df["hitter_id"].astype(str) == "2"]
+        else:
+            p1_shots = pd.DataFrame()
+            p2_shots = pd.DataFrame()
 
         p1_deep_ratio = round((len(p1_shots[p1_shots["depth"].str.contains("Deep", na=False)]) / max(1, len(p1_shots))) * 100.0, 1) if not p1_shots.empty else 0.0
         p2_deep_ratio = round((len(p2_shots[p2_shots["depth"].str.contains("Deep", na=False)]) / max(1, len(p2_shots))) * 100.0, 1) if not p2_shots.empty else 0.0
@@ -251,6 +291,11 @@ class BallShotMetricsAnalyzer:
             "point_winner": winner_name,
             "decision": decision_type,
             "margin_cm": margin_cm,
+            "nearest_line": nearest_line,
+            "landing_frame": landing_frame,
+            "hitter_id": hitter_id,
+            "landing_pos_mini": list(landing_pos_mini) if landing_pos_mini is not None else None,
+            "first_bounce_pos": list(first_bounce_pos) if first_bounce_pos is not None else None,
             "referee_reason": reason,
             "ball_speed_kpis": {
                 "avg_speed_kmh": avg_shot_speed,

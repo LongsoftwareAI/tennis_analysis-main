@@ -208,12 +208,12 @@ class MatchVisualizer:
         self.draw_court_canvas(ax, title="Hawk-Eye Ball Bounce Dispersion Map", show_zones=True)
 
         for b in bounces_list:
-            bx = b["x_m"]
-            by = b["y_m"]
-            is_in = b["is_in"]
-            is_final = b["is_final"]
-            s_idx = b["shot_index"]
-            margin = b["margin_cm"]
+            bx = float(b.get("x_m") or 0.0)
+            by = float(b.get("y_m") or 0.0)
+            is_in = bool(b.get("is_in", True))
+            is_final = bool(b.get("is_final", False))
+            s_idx = b.get("shot_index", 1)
+            margin = float(b.get("margin_cm") or 0.0)
 
             color = "#22c55e" if is_in else "#ef4444"
             edge = "#ffffff" if is_final else "#1e293b"

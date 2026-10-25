@@ -1,0 +1,54 @@
+{
+  "match_name": "input_video_1_413_1081",
+  "total_frames": 668,
+  "fps": 50.0,
+  "duration_seconds": 13.36,
+  "rally_length_shots": 10,
+  "point_winner": "Player 1",
+  "decision": "NET",
+  "margin_cm": 0.0,
+  "referee_reason": "",
+  "ball_speed_kpis": {
+    "avg_speed_kmh": 82.4,
+    "max_speed_kmh": 86.3,
+    "fastest_hitter": "Player 1"
+  },
+  "player_1": {
+    "name": "Player 1",
+    "court_side": "Near Court (San gan)",
+    "total_distance_m": 14.61,
+    "avg_speed_kmh": 3.9,
+    "max_speed_kmh": 19.5,
+    "shots_hit": 4,
+    "deep_ball_ratio_pct": 0.0,
+    "zone_distribution_pct": {
+      "baseline": 100.0,
+      "nomans_land": 0.0,
+      "attack_zone": 0.0
+    },
+    "lateral_distribution_pct": {
+      "ad_court": 100.0,
+      "center": 0.0,
+      "deuce_court": 0.0
+    }
+  },
+  "player_2": {
+    "name": "Player 2",
+    "court_side": "Far Court (San xa)",
+    "total_distance_m": 35.72,
+    "avg_speed_kmh": 9.6,
+    "max_speed_kmh": 91.7,
+    "shots_hit": 6,
+    "deep_ball_ratio_pct": 0.0,
+    "zone_distribution_pct": {
+      "baseline": 86.7,
+      "nomans_land": 13.3,
+      "attack_zone": 0.0
+    },
+    "lateral_distribution_pct": {
+      "ad_court": 0.0,
+      "center": 0.0,
+      "deuce_court": 100.0
+    }
+  }
+}

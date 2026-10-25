@@ -1,0 +1,28 @@
+players:
+  player1_name: Player 1
+  player2_name: Player 2
+tracking:
+  device: auto
+  court_mode: cpv
+  ball_detector: hybrid
+  ball_batch_size: 4
+  match_mode: auto
+  use_stubs: true
+  force_live: false
+models:
+  player_model: models/yolo26s.pt
+  ball_model_tracknet: models/tracknet_weights.pth
+  ball_model_yolo: models/ball_detector_yolo26_best.pt
+  ball_model: models/tracknet_weights.pth
+  court_model: models/model_tennis_court_det.pt
+  bounce_model: models/bounce_model.cbm
+visualization:
+  draw_players: true
+  player_draw_mode: ellipse
+  draw_ball: true
+  ball_effect: tracer
+  draw_court_keypoints: true
+  draw_mini_court: true
+  draw_stats: true
+  draw_referee_decision: true
+  draw_frame_number: true

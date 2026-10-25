@@ -1,0 +1,6 @@
+﻿shot_index,hit_frame,end_frame,flight_time_s,hitter,hitter_id,receiver,speed_kmh,hit_x_m,hit_y_m,bounce_x_m,bounce_y_m,direction,depth,status,margin_cm,result
+1,43,72,0.58,Player 2,2,Player 1,141.9,-1.13,-12.65,0.0,10.12,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+2,72,180,2.16,Player 1,1,Player 2,69.7,3.2,12.65,4.51,-10.91,Down the Line (Doc day),Deep (Bong sau),OUT,39.6,In Play (Rally)
+3,180,214,0.68,Player 2,2,Player 1,109.6,4.02,-7.69,0.0,6.15,Center (Giua san),Medium (Giua san),IN,35.0,In Play (Rally)
+4,214,352,2.76,Player 1,1,Player 2,65.1,-3.08,12.65,-2.42,-14.0,Down the Line (Doc day),Deep (Bong sau),OUT,169.4,In Play (Rally)
+5,352,380,0.56,Player 2,2,Player 1,100.1,-2.74,-6.18,0.0,4.95,Center (Giua san),Medium (Giua san),IN,35.0,ERROR (NET)

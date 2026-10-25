@@ -1,0 +1,109 @@
+{
+  "match_name": "input_video_1",
+  "total_frames": 1081,
+  "fps": 50.0,
+  "duration_seconds": 21.62,
+  "rally_length_shots": 15,
+  "point_winner": "Player 1",
+  "decision": "IN",
+  "margin_cm": 170.5,
+  "nearest_line": "Left Sideline (Bien trai)",
+  "landing_frame": 918,
+  "hitter_id": 1,
+  "landing_pos_mini": [
+    1791.1431884765625,
+    189.42117309570312
+  ],
+  "first_bounce_pos": [
+    1791.1431884765625,
+    189.42117309570312
+  ],
+  "referee_reason": "Player 1 an diem Winner (Passing shot trong san +170.5 cm)",
+  "ball_speed_kpis": {
+    "avg_speed_kmh": 82.4,
+    "max_speed_kmh": 86.3,
+    "fastest_hitter": "Player 1"
+  },
+  "player_1": {
+    "name": "Player 1",
+    "court_side": "Near Court (San gan)",
+    "total_distance_m": 22.24,
+    "avg_speed_kmh": 3.8,
+    "max_speed_kmh": 23.7,
+    "shots_hit": 7,
+    "deep_ball_ratio_pct": 0.0,
+    "zone_distribution_pct": {
+      "baseline": 100.0,
+      "nomans_land": 0.0,
+      "attack_zone": 0.0
+    },
+    "lateral_distribution_pct": {
+      "ad_court": 100.0,
+      "center": 0.0,
+      "deuce_court": 0.0
+    }
+  },
+  "player_2": {
+    "name": "Player 2",
+    "court_side": "Far Court (San xa)",
+    "total_distance_m": 46.17,
+    "avg_speed_kmh": 5.8,
+    "max_speed_kmh": 36.0,
+    "shots_hit": 8,
+    "deep_ball_ratio_pct": 16.7,
+    "zone_distribution_pct": {
+      "baseline": 84.4,
+      "nomans_land": 15.6,
+      "attack_zone": 0.0
+    },
+    "lateral_distribution_pct": {
+      "ad_court": 0.0,
+      "center": 0.0,
+      "deuce_court": 100.0
+    }
+  },
+  "is_segmented_video": true,
+  "segment_count": 2,
+  "rallies": [
+    {
+      "rally_index": 1,
+      "segment_frames": [
+        0,
+        381
+      ],
+      "time_range": "0.00s - 7.62s",
+      "decision": "IN",
+      "point_winner": "Player 1",
+      "margin_cm": 166.8,
+      "nearest_line": "Left Sideline (Bien trai)",
+      "landing_frame": 262,
+      "landing_time_s": 5.24,
+      "landing_pos_mini": [
+        1698.1636962890625,
+        188.51661682128906
+      ],
+      "referee_reason": "Player 1 an diem Winner (Passing shot trong san +166.8 cm)",
+      "shots_count": 5
+    },
+    {
+      "rally_index": 2,
+      "segment_frames": [
+        413,
+        1081
+      ],
+      "time_range": "8.26s - 21.62s",
+      "decision": "IN",
+      "point_winner": "Player 1",
+      "margin_cm": 170.5,
+      "nearest_line": "Left Sideline (Bien trai)",
+      "landing_frame": 918,
+      "landing_time_s": 18.36,
+      "landing_pos_mini": [
+        1791.1431884765625,
+        189.42117309570312
+      ],
+      "referee_reason": "Player 1 an diem Winner (Passing shot trong san +170.5 cm)",
+      "shots_count": 10
+    }
+  ]
+}
